@@ -29,7 +29,7 @@ const perm=k=>isAdmin?"edit":(acc&&acc.perms&&acc.perms[k])||"none";
 const can=k=>perm(k)!="none",wr=k=>perm(k)=="edit"&&canW;
 const D=k=>cache[k]||[],t=x=>String(x||"").trim().toLowerCase();
 const nm=id=>NM[id]||"Person "+String(id).slice(-4);
-function sync(){const need=new Set();Object.keys(MODS).forEach(k=>can(k)&&need.add(k));
+function sync(){txStart();const need=new Set();Object.keys(MODS).forEach(k=>can(k)&&need.add(k));
 if(can("stock")||can("dn")||can("so"))["grn","fgr","dn"].forEach(k=>need.add(k));
 if(can("dash"))["so","wo","spectro","mtc"].forEach(k=>need.add(k));
 Object.keys(unsubs).forEach(k=>{if(!need.has(k)){unsubs[k]();delete unsubs[k];delete cache[k]}});
@@ -68,13 +68,22 @@ function msgView(h,b){return`<div class="login"><h1>Foundry ERP</h1><div class="
 function noAccess(){return msgView(`Hello ${H(me.name||"there")}. You do not have access to any ERP module yet.`,(canW&&me.id?(requested?'<p class="mute">Request sent. The administrator will grant access.</p>':'<button class="btn p" data-a="req">Request access</button>'):'<p class="mute">Ask the administrator to grant you access.</p>'))}
 function shell(body){const gs={};Object.keys(MODS).filter(can).forEach(k=>(gs[MODS[k].g]=gs[MODS[k].g]||[]).push(k));
 const nav=b=>`<button data-a="nav" data-v="${b[0]}"${S.view==b[0]?' class="on"':""}>${b[1]}</button>`;
-return`<header class="top"><button class="hb" data-a="menu" aria-label="Menu" aria-expanded="${S.menu}"><span></span><span></span><span></span></button><b>Foundry ERP</b><span class="mute sm">${H(me.name||"")}${isAdmin?" (admin)":""}</span><button class="btn s" data-a="out">Sign out</button></header>`+(S.menu?`<div class="scrim" data-a="menu"></div><aside class="dr"><h3>Overview</h3>${can("dash")?nav(["dash","Dashboard"]):""}${can("stock")?nav(["stock","Stock"]):""}${Object.keys(gs).map(g=>`<h3>${g}</h3>`+gs[g].map(k=>nav([k,MODS[k].n])).join("")).join("")}${isAdmin?"<h3>Admin</h3>"+nav(["users","Users and access"]):""}</aside>`:"")+`<main>${LOCAL?'<div class="msg">Local mode: data is saved only in this browser. Open the artifact from claude.ai to share data with other users.</div>':""}${canW?"":'<div class="msg">You have view-only access to this page, so changes cannot be saved.</div>'}${body}</main>`}
+return`<header class="top"><button class="hb" data-a="menu" aria-label="Menu" aria-expanded="${S.menu}"><span></span><span></span><span></span></button><b>Foundry ERP</b><span class="mute sm">${H(me.name||"")}${isAdmin?" (admin)":""}</span><button class="btn s" data-a="out">Sign out</button></header>`+(S.menu?`<div class="scrim" data-a="menu"></div><aside class="dr"><h3>Overview</h3>${can("dash")?nav(["dash","Dashboard"]):""}${can("stock")?nav(["stock","Stock"]):""}${isAdmin||can("dash")?nav(["txn","Transactions"]):""}${Object.keys(gs).map(g=>`<h3>${g}</h3>`+gs[g].map(k=>nav([k,MODS[k].n])).join("")).join("")}${isAdmin?"<h3>Admin</h3>"+nav(["users","Users and access"]):""}</aside>`:"")+`<main>${LOCAL?'<div class="msg">Local mode: data is saved only in this browser. Open the artifact from claude.ai to share data with other users.</div>':""}${canW?"":'<div class="msg">You have view-only access to this page, so changes cannot be saved.</div>'}${body}</main>`}
 function dash(){const W=D("wo"),sp=D("spectro"),n=s=>W.filter(w=>w.status==s).length,pass=sp.filter(x=>x.result=="Pass").length,fail=sp.filter(x=>x.result=="Fail").length;
 const k=(v,l,c)=>`<div class="kpi ${c||""}"><b>${v}</b><span>${l}</span></div>`,mx=Math.max(1,W.length);
 const bar=(l,v,c,m)=>`<div class="row"><span>${l}</span><div class="bar"><i class="${c||""}" style="width:${v/m*100}%"></i></div><b>${v}</b></div>`,q=Math.max(1,sp.length);
 return`<h2>Dashboard</h2><div class="kpis">${k(W.length,"Work Orders")}${k(W.length-n("MTC issued"),"Open Work Orders","e")}${k(n("In production"),"In production")}${k(D("so").filter(s=>s.status!="Closed").length,"Open Sales Orders")}${k(pass,"Spectro passed","g")}${k(fail,"Spectro failed","r")}${k(D("mtc").length,"MTC issued","g")}</div>
 <div class="grid"><div class="card"><h3>Work Orders by stage</h3>${ST.map(s=>bar(s,n(s),"",mx)).join("")}</div><div class="card"><h3>Quality stages</h3>${bar("Samples tested",sp.length,"q",q)}${bar("Passed",pass,"ok",q)}${bar("Failed (NCR)",fail,"bad",q)}${bar("MTC issued",D("mtc").length,"ok",q)}</div></div>
 ${!W.length&&isAdmin&&canW?`<div class="card"><p>No data yet.</p><button class="btn p" data-a="demo">Load demo data</button></div>`:""}`}
+let TX=[],txUn=null;
+function txStart(){if(txUn||!window.sb||!(isAdmin||can("dash")))return;
+const load=async()=>{const{data}=await sb.from("transactions").select("*").order("created_at",{ascending:false}).limit(200);TX=data||[];render()};
+load();const ch=sb.channel("txn-"+Math.random()).on("postgres_changes",{event:"INSERT",schema:"public",table:"transactions"},load).subscribe();txUn=()=>sb.removeChannel(ch)}
+function txnV(){const lab=tn=>{const e=Object.entries(SCHEMA).find(([k,x])=>x.t==tn);return e&&MODS[e[0].slice(4)]?MODS[e[0].slice(4)].n:tn};
+const skip=["created_at","created_by"],sum=r=>{if(r.action=="INSERT")return"Created";if(r.action=="DELETE")return"Deleted";
+const o=r.old_data||{},n=r.new_data||{};const c=Object.keys(n).filter(k=>!skip.includes(k)&&JSON.stringify(o[k])!=JSON.stringify(n[k]));
+return c.map(k=>k+": "+(o[k]==null?"-":typeof o[k]=="object"?"...":o[k])+" → "+(n[k]==null?"-":typeof n[k]=="object"?"...":n[k])).join("; ")||"Updated"};
+return`<h2>Transactions</h2><p class="mute">Live log of every change, recorded by the database. Newest first (last 200).</p><div class="card scroll"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Module</th><th>Record</th><th>Details</th></tr></thead><tbody>${TX.map(r=>`<tr><td>${H(new Date(r.created_at).toLocaleString())}</td><td>${H(r.changed_by_name||"System")}</td><td><b>${r.action=="INSERT"?"Created":r.action=="UPDATE"?"Updated":"Deleted"}</b></td><td>${H(lab(r.table_name))}</td><td>${H(r.record_id||"")}</td><td>${H(sum(r))}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No transactions yet.</td></tr>'}</tbody></table></div>`}
 function stockV(){const m={};["grn","fgr","dn"].forEach(k=>D(k).forEach(r=>{const i=r.item.trim(),o=m[t(i)]||(m[t(i)]={i,in:0,out:0});k=="dn"?o.out+=+r.qty:o.in+=+r.qty}));
 const rows=Object.values(m);return`<h2>Stock</h2><p class="mute">Calculated from GRN and Finished Goods Receipts (in) and Dispatch Notes (out).</p><div class="card scroll"><table><thead><tr><th>Item</th><th>In (tons)</th><th>Out (tons)</th><th>Balance</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${H(o.i)}</td><td>${o.in}</td><td>${o.out}</td><td><b>${o.in-o.out}</b></td></tr>`).join("")||'<tr><td colspan="4" class="mute">No stock movements yet.</td></tr>'}</tbody></table></div>`}
 function list(k){const m=MODS[k],cs=m.f.filter(f=>f[2]!="spectro").slice(0,6),rs=D(k);
@@ -97,8 +106,8 @@ function render(){const a=$("#app");
 if(boot==0){a.innerHTML=msgView("Loading...");return}
 if(boot==2){a.innerHTML=msgView("Could not load your data.",`<p class="mute sm">${H(DG)}</p><div class="bar2"><button class="btn" data-a="retry">Try again</button><button class="btn" data-a="out">Sign out</button></div>`);return}
 if(!isAdmin&&!KEYS.some(can)){a.innerHTML=noAccess();return}
-let v=S.view;if(v=="users"&&!isAdmin||(v=="dash"||v=="stock")&&!can(v)||MODS[v]&&!can(v))v=home();
-let b;if(S.form&&can(S.form.k))b=form();else if(v=="dash")b=dash();else if(v=="stock")b=stockV();else if(v=="users")b=users();else b=list(v);
+let v=S.view;if(v=="txn"&&!(isAdmin||can("dash"))||v=="users"&&!isAdmin||(v=="dash"||v=="stock")&&!can(v)||MODS[v]&&!can(v))v=home();
+let b;if(S.form&&can(S.form.k))b=form();else if(v=="dash")b=dash();else if(v=="stock")b=stockV();else if(v=="txn")b=txnV();else if(v=="users")b=users();else b=list(v);
 a.innerHTML=shell(b);hint();document.querySelectorAll(".sr").forEach(calc);
 if(S.form&&!wr(S.form.k))document.querySelectorAll("#fgd input,#fgd select").forEach(x=>x.disabled=true)}
 function hint(){const h=$("#hint");if(!h||!S.form||!["so","dn"].includes(S.form.k))return;const i=$("#f_item"),q=$("#f_qty");if(!i)return;const s=stock(i.value),n=+q.value||0;

@@ -22,6 +22,10 @@ wo:[["Indent","ind",r=>({wo:r.id})],["Spectro","spectro",r=>({wo:r.id})],["FG Re
 ind:[["PO","po",r=>({ind:r.id,item:r.item,qty:r.qty})]],po:[["GRN","grn",r=>({po:r.id,item:r.item,qty:r.qty})]],
 spectro:[["MTC","mtc",r=>({spectro:r.id,wo:r.wo,heat:r.heat})]],dn:[["Invoice","inv",r=>({dn:r.id})]]};
 const EL=["C","Si","Mn","P","S","Cr"];
+/* Which field links each module back to its source record, and which steps may happen only once per source.
+   Remove a module from ONCE to allow several (e.g. add "dn" to ONCE to block part dispatches). */
+const LINK={wo:"so",dn:"so",ind:"wo",spectro:"wo",fgr:"wo",po:"ind",grn:"po",mtc:"spectro",inv:"dn"};
+const ONCE=new Set(["wo","spectro","mtc","po","grn","inv"]);
 /* ---------- state and permissions ---------- */
 let DB=null,U=null,me={},boot=0,isAdmin=false,canW=true,acc=null,accList=[],reqList=[],cache={},unsubs={},NM={},requested=false;
 let S={view:"dash",form:null,menu:false,msg:"",err:""};
@@ -108,8 +112,20 @@ if(boot==2){a.innerHTML=msgView("Could not load your data.",`<p class="mute sm">
 if(!isAdmin&&!KEYS.some(can)){a.innerHTML=noAccess();return}
 let v=S.view;if(v=="txn"&&!(isAdmin||can("dash"))||v=="users"&&!isAdmin||(v=="dash"||v=="stock")&&!can(v)||MODS[v]&&!can(v))v=home();
 let b;if(S.form&&can(S.form.k))b=form();else if(v=="dash")b=dash();else if(v=="stock")b=stockV();else if(v=="txn")b=txnV();else if(v=="users")b=users();else b=list(v);
-a.innerHTML=shell(b);hint();document.querySelectorAll(".sr").forEach(calc);
+a.innerHTML=shell(b)+stepModal();hint();{const g=$("#stepGo");if(g)g.focus()}document.querySelectorAll(".sr").forEach(calc);
 if(S.form&&!wr(S.form.k))document.querySelectorAll("#fgd input,#fgd select").forEach(x=>x.disabled=true)}
+function stepModal(){if(!S.step)return"";const st=S.step,r=D(st.k)[st.i],x=r&&A[st.k]&&A[st.k][st.j];if(!x){S.step=null;return""}
+const to=MODS[x[1]].n,from=MODS[st.k].n,v=x[2](r),fl=MODS[x[1]].f;
+const rows=Object.keys(v).filter(k=>v[k]!==undefined&&v[k]!=="").map(k=>{const f=fl.find(y=>y[0]==k);return`<tr><td class="mute">${H(f?f[1]:k)}</td><td><b>${H(v[k])}</b></td></tr>`}).join("");
+if(st.dup)return`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="stt"><div class="box"><h3 id="stt">${H(to)} already exists</h3>
+<p><b>${H(from)} ${H(r.id)}</b> already has a <b>${H(to)}</b>: <b>${st.dup.map(H).join(", ")}</b>. It cannot be created again.</p>
+<div class="bar2">${can(x[1])?`<button class="btn p" data-a="nav" data-v="${x[1]}">View ${H(to)}</button>`:""}<button class="btn" id="stepGo" data-a="stepNo">Close</button></div></div></div>`;
+const warn=x[1]=="mtc"&&r.result!="Pass"?`<div class="msg" style="background:#f5c26b55">Spectro result is <b>${H(r.result||"not set")}</b>. An MTC normally needs a Pass.</div>`:"";
+return`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="stt"><div class="box"><h3 id="stt">Move to ${H(to)}?</h3>
+<p>You are moving from <b>${H(from)} ${H(r.id)}</b> to a new <b>${H(to)}</b>. These details carry over:</p>
+<table><tbody>${rows||'<tr><td class="mute">Nothing to carry over.</td></tr>'}</tbody></table>${warn}
+<div class="bar2"><button class="btn p" id="stepGo" data-a="stepGo">Continue to ${H(to)}</button><button class="btn" data-a="stepNo">Cancel</button></div></div></div>`}
+document.addEventListener("keydown",e=>{if(e.key=="Escape"&&S.step){S.step=null;render()}});
 function hint(){const h=$("#hint");if(!h||!S.form||!["so","dn"].includes(S.form.k))return;const i=$("#f_item"),q=$("#f_qty");if(!i)return;const s=stock(i.value),n=+q.value||0;
 h.textContent=i.value?`In stock: ${s} tons. `+(S.form.k=="so"?(n>s?`Shortfall ${n-s} tons: create a Work Order for it after saving.`:"Stock covers the full order."):(n>s?"Not enough stock for this dispatch.":"")):""}
 function calc(r){const v=[...r.querySelectorAll("input")].map(x=>x.value),c=r.querySelector(".res");if(v[3]===""||(v[1]===""&&v[2]==="")){c.textContent="-";c.className="res";return}
@@ -121,6 +137,7 @@ else{o[fid]=$("#f_"+fid).value.trim();if(!o[fid]&&!opt&&ty!="date")err=err||l+" 
 if(k=="spectro")o.result=judge(o.comp);
 if(k=="mtc"){const s=D("spectro").find(x=>x.id==o.spectro);if(s&&s.result!="Pass")err=err||"MTC needs a Spectro Report that passed. Quality must decide on failed material first."}
 if(k=="dn"&&!id&&+o.qty>stock(o.item))err=err||`Only ${stock(o.item)} tons in stock for this item.`;
+if(!id&&!err&&ONCE.has(k)&&o[LINK[k]]){const ex=await rows(k,LINK[k],o[LINK[k]]);if(ex.length)err=`${m.n} ${ex.map(y=>y.id).join(", ")} already exists for ${o[LINK[k]]}. It cannot be created again.`}
 if(err){S.err=err;S.form.v=Object.assign(S.form.v,o);render();return}
 try{let r;if(id){r={...D(k).find(x=>x.id==id),...o};await DB.doc("rec_"+k+"/"+id).set(r)}else r=await add(k,o);
 await chain(k,o);S.msg=r.id+" saved. Linked statuses updated.";if(k=="spectro"&&o.result=="Fail")S.msg=r.id+" failed. Work Order is on hold until Quality decides.";
@@ -133,7 +150,12 @@ case"retry":await start();return;
 case"nav":S={view:d.v,form:null,menu:false,msg:"",err:""};break;
 case"new":S.form={k:d.k,v:{status:MODS[d.k].f.find(f=>f[0]=="status")?.[3][0]},id:null};S.err="";S.msg="";break;
 case"edit":if(e.target.closest("button"))return;S.form={k:d.k,v:{...D(d.k)[d.i]},id:D(d.k)[d.i].id};S.err="";break;
-case"act":{const r=D(d.k)[d.i],x=A[d.k][d.j];S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}
+case"act":{const st={k:d.k,i:d.i,j:d.j},r=D(st.k)[st.i],t=A[st.k][st.j][1];
+if(ONCE.has(t)){const ex=await rows(t,LINK[t],r.id);if(ex.length)st.dup=ex.map(y=>y.id)}S.step=st;break}
+case"stepNo":S.step=null;break;
+case"stepGo":{const st=S.step,r=D(st.k)[st.i],x=A[st.k][st.j];
+if(ONCE.has(x[1])){const ex=await rows(x[1],LINK[x[1]],r.id);if(ex.length){st.dup=ex.map(y=>y.id);break}}
+S.step=null;S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}
 case"save":await submit();return;case"cancel":S.form=null;S.err="";break;
 case"del":if(confirm("Delete "+S.form.id+"?")){await DB.doc("rec_"+S.form.k+"/"+S.form.id).delete();S.form=null}break;
 case"demo":await demo();break;

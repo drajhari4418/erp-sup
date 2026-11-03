@@ -28,22 +28,42 @@ const LINK={wo:"so",dn:"so",ind:"wo",spectro:"wo",fgr:"wo",po:"ind",grn:"po",mtc
 const ONCE=new Set(["wo","spectro","mtc","po","grn","inv"]);
 /* ---------- state and permissions ---------- */
 let DB=null,U=null,me={},boot=0,isAdmin=false,canW=true,acc=null,accList=[],reqList=[],cache={},unsubs={},NM={},requested=false;
+let P={k:"",page:0,size:25,q:"",rows:[],total:0,kids:{},loading:false},STK={},DS=null,TXN=100;
+const REFC={};let LOADERR="";
 let S={view:"dash",form:null,menu:false,msg:"",err:""};
 const perm=k=>isAdmin?"edit":(acc&&acc.perms&&acc.perms[k])||"none";
 const can=k=>perm(k)!="none",wr=k=>perm(k)=="edit"&&canW;
-const D=k=>cache[k]||[],t=x=>String(x||"").trim().toLowerCase();
+const D=k=>k==P.k?P.rows:[],t=x=>String(x||"").trim().toLowerCase();
 const nm=id=>NM[id]||"Person "+String(id).slice(-4);
-function sync(){txStart();const need=new Set();Object.keys(MODS).forEach(k=>can(k)&&need.add(k));
-if(can("stock")||can("dn")||can("so"))["grn","fgr","dn"].forEach(k=>need.add(k));
-if(can("dash"))["so","wo","spectro","mtc"].forEach(k=>need.add(k));
-Object.keys(unsubs).forEach(k=>{if(!need.has(k)){unsubs[k]();delete unsubs[k];delete cache[k]}});
-need.forEach(k=>{if(unsubs[k])return;unsubs[k]=DB.collection("rec_"+k).onSnapshot(s=>{cache[k]=s.docs.map(d=>d.data()).sort((a,b)=>a.id<b.id?-1:1);render()},()=>{})})}
+/* ---------- server-side data: one page at a time ---------- */
+const later=(()=>{const m={};return(n,f,ms=400)=>{clearTimeout(m[n]);m[n]=setTimeout(f,ms)}})();
+let chUn=null,reqId=0;
+function curView(){let v=S.view;if(MODS[v]&&P.k!=v){openList(v);refreshView()}return v}
+function openList(k){P={k,page:0,size:25,q:"",rows:[],total:0,kids:{},loading:true}}
+async function loadStk(){const{data,error}=await sb.from("stock_levels").select("*");if(error)throw error;STK={};(data||[]).forEach(r=>STK[r.item_key]={i:r.label,in:+r.qty_in,out:+r.qty_out})}
+async function loadPage(){const k=P.k;if(!k)return;const my=++reqId;P.loading=true;
+const r=await DB.page("rec_"+k,{page:P.page,size:P.size,q:P.q});
+if(!r.rows.length&&P.page>0){P.page=Math.max(0,Math.ceil(r.total/P.size)-1);return loadPage()}
+const ids=r.rows.map(x=>x.id),kids={};
+if(ids.length)await Promise.all((A[k]||[]).map(async a=>{const t=a[1];if(!can(t))return;const m={};(await DB.byIds("rec_"+t,LINK[t],ids)).forEach(x=>(m[x[LINK[t]]]=m[x[LINK[t]]]||[]).push(x));kids[t]=m}));
+if(my!=reqId||P.k!=k)return;P.rows=r.rows;P.total=r.total;P.kids=kids;P.loading=false}
+async function refreshView(){const v=curView();LOADERR="";
+try{if(can("stock")||can("dn")||can("so"))await loadStk();
+if(MODS[v]){if(P.k!=v)openList(v);await loadPage()}
+else if(v=="dash"&&can("dash")){const{data,error}=await sb.rpc("dashboard_stats");if(error)throw error;DS=data}
+}catch(e){P.loading=false;const m=e.message||"error";LOADERR=/dashboard_stats|stock_levels|schema cache|does not exist|Could not find/i.test(m)?"The database needs the speed-up script. Open Supabase, SQL Editor, and run scale.sql once. ("+m+")":"Could not load data: "+m}
+if(!S.form||S.step)render()}
+function sync(){txStart();if(!chUn)chUn=DB.onChange(Object.keys(MODS).map(k=>"rec_"+k),()=>later("chg",refreshView,500));refreshView()}
+const optsHtml=rs=>rs.map(r=>`<option value="${H(r.id)}" label="${H(r.customer||r.item||r.sample||"")}">`).join("");
+async function fillRefs(){document.querySelectorAll("input[data-ref]").forEach(async i=>{const rk=i.dataset.ref;
+if(!REFC[rk]||Date.now()-REFC[rk].t>20000){try{REFC[rk]={t:Date.now(),rows:(await DB.page("rec_"+rk,{size:15})).rows}}catch(e){return}}
+const dl=$("#dl_"+i.id.slice(2));if(dl)dl.innerHTML=(i.value?`<option value="${H(i.value)}">`:"")+optsHtml(REFC[rk].rows)})}
 function loadNames(){const ids=[...accList,...reqList].map(x=>x.id);if(!ids.length)return;U.profiles(ids).then(p=>{let ch=0;ids.forEach(i=>{const n=(p[i]&&p[i].name)||"";if(NM[i]!==n){NM[i]=n;ch=1}});if(ch)render()})}
-function stock(item){let s=0;D("grn").forEach(r=>t(r.item)==t(item)&&(s+=+r.qty));D("fgr").forEach(r=>t(r.item)==t(item)&&(s+=+r.qty));D("dn").forEach(r=>t(r.item)==t(item)&&(s-=+r.qty));return s}
+function stock(item){const o=STK[t(item)];return o?o.in-o.out:0}
 const judge=c=>{const v=c.filter(x=>x.ach!=="");if(!v.length)return"Pending";return v.every(x=>(x.min===""||+x.ach>=+x.min)&&(x.max===""||+x.ach<=+x.max))?"Pass":"Fail"};
 async function add(k,o){o.id=MODS[k].p+"-"+Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,4).toUpperCase();o.by=me.id||"";await DB.doc("rec_"+k+"/"+o.id).set(o);return o}
 const AL={so:[["so","once"],["so","qty"]],wo:[["wo","multi"],["wo","multi"],["wo","once"]],ind:[["ind","once"]],po:[["po","once"]],spectro:[["spectro","once"]],dn:[["dn","once"]]};
-function acts(k,r,i){return(A[k]||[]).map((a,j)=>{const[lf,md]=AL[k][j],L=can(a[1])?D(a[1]).filter(x=>x[lf]==r.id):[],b=`data-a="act" data-k="${k}" data-i="${i}" data-j="${j}"`;
+function acts(k,r,i){return(A[k]||[]).map((a,j)=>{const[lf,md]=AL[k][j],L=can(a[1])?((P.kids[a[1]]||{})[r.id]||[]):[],b=`data-a="act" data-k="${k}" data-i="${i}" data-j="${j}"`;
 if(md=="once"&&L.length)return`<span class="tag ok" title="${H(L.map(x=>x.id).join(", "))}">✓ ${a[0]}</span> `;
 if(md=="qty"){const s=L.reduce((n,x)=>n+ +x.qty,0);if(L.length&&s>=+r.qty)return`<span class="tag ok">✓ Dispatched ${s}/${r.qty} t</span> `;return wr(a[1])?`<button class="btn s" ${b}>+ ${a[0]}${s?` (${s}/${r.qty} t)`:""}</button>`:""}
 if(!wr(a[1]))return L.length?`<span class="tag">${a[0]} ×${L.length}</span> `:"";
@@ -72,31 +92,32 @@ function msgView(h,b){return`<div class="login"><h1>Foundry ERP</h1><div class="
 function noAccess(){return msgView(`Hello ${H(me.name||"there")}. You do not have access to any ERP module yet.`,(canW&&me.id?(requested?'<p class="mute">Request sent. The administrator will grant access.</p>':'<button class="btn p" data-a="req">Request access</button>'):'<p class="mute">Ask the administrator to grant you access.</p>'))}
 function shell(body){const gs={};Object.keys(MODS).filter(can).forEach(k=>(gs[MODS[k].g]=gs[MODS[k].g]||[]).push(k));
 const nav=b=>`<button data-a="nav" data-v="${b[0]}"${S.view==b[0]?' class="on"':""}>${b[1]}</button>`;
-return`<header class="top"><button class="hb" data-a="menu" aria-label="Menu" aria-expanded="${S.menu}"><span></span><span></span><span></span></button><b>Foundry ERP</b><span class="mute sm">${H(me.name||"")}${isAdmin?" (admin)":""}</span><button class="btn s" data-a="out">Sign out</button></header>`+(S.menu?`<div class="scrim" data-a="menu"></div><aside class="dr"><h3>Overview</h3>${can("dash")?nav(["dash","Dashboard"]):""}${can("stock")?nav(["stock","Stock"]):""}${isAdmin||can("dash")?nav(["txn","Transactions"]):""}${Object.keys(gs).map(g=>`<h3>${g}</h3>`+gs[g].map(k=>nav([k,MODS[k].n])).join("")).join("")}${isAdmin?"<h3>Admin</h3>"+nav(["users","Users and access"]):""}</aside>`:"")+`<main>${LOCAL?'<div class="msg">Local mode: data is saved only in this browser. Open the artifact from claude.ai to share data with other users.</div>':""}${canW?"":'<div class="msg">You have view-only access to this page, so changes cannot be saved.</div>'}${body}</main>`}
-function dash(){const W=D("wo"),sp=D("spectro"),n=s=>W.filter(w=>w.status==s).length,pass=sp.filter(x=>x.result=="Pass").length,fail=sp.filter(x=>x.result=="Fail").length;
-const k=(v,l,c)=>`<div class="kpi ${c||""}"><b>${v}</b><span>${l}</span></div>`,mx=Math.max(1,W.length);
-const bar=(l,v,c,m)=>`<div class="row"><span>${l}</span><div class="bar"><i class="${c||""}" style="width:${v/m*100}%"></i></div><b>${v}</b></div>`,q=Math.max(1,sp.length);
-return`<h2>Dashboard</h2><div class="kpis">${k(W.length,"Work Orders")}${k(W.length-n("MTC issued"),"Open Work Orders","e")}${k(n("In production"),"In production")}${k(D("so").filter(s=>s.status!="Closed").length,"Open Sales Orders")}${k(pass,"Spectro passed","g")}${k(fail,"Spectro failed","r")}${k(D("mtc").length,"MTC issued","g")}</div>
-<div class="grid"><div class="card"><h3>Work Orders by stage</h3>${ST.map(s=>bar(s,n(s),"",mx)).join("")}</div><div class="card"><h3>Quality stages</h3>${bar("Samples tested",sp.length,"q",q)}${bar("Passed",pass,"ok",q)}${bar("Failed (NCR)",fail,"bad",q)}${bar("MTC issued",D("mtc").length,"ok",q)}</div></div>
-${!W.length&&isAdmin&&canW?`<div class="card"><p>No data yet.</p><button class="btn p" data-a="demo">Load demo data</button></div>`:""}`}
+return`<header class="top"><button class="hb" data-a="menu" aria-label="Menu" aria-expanded="${S.menu}"><span></span><span></span><span></span></button><b>Foundry ERP</b><span class="mute sm">${H(me.name||"")}${isAdmin?" (admin)":""}</span><button class="btn s" data-a="out">Sign out</button></header>`+(S.menu?`<div class="scrim" data-a="menu"></div><aside class="dr"><h3>Overview</h3>${can("dash")?nav(["dash","Dashboard"]):""}${can("stock")?nav(["stock","Stock"]):""}${isAdmin||can("dash")?nav(["txn","Transactions"]):""}${Object.keys(gs).map(g=>`<h3>${g}</h3>`+gs[g].map(k=>nav([k,MODS[k].n])).join("")).join("")}${isAdmin?"<h3>Admin</h3>"+nav(["users","Users and access"]):""}</aside>`:"")+`<main>${LOCAL?'<div class="msg">Local mode: data is saved only in this browser. Open the artifact from claude.ai to share data with other users.</div>':""}${LOADERR?`<div class="msg" role="alert" style="background:#f5c26b55">${H(LOADERR)}</div>`:""}${canW?"":'<div class="msg">You have view-only access to this page, so changes cannot be saved.</div>'}${body}</main>`}
+function dash(){if(!DS)return LOADERR?"":'<p class="mute">Loading...</p>';
+const n=s=>(DS.wo_by_status||{})[s]||0,W=+DS.wo_total,pass=+DS.sp_pass,fail=+DS.sp_fail,spt=+DS.sp_total,mtc=+DS.mtc_total;
+const k=(v,l,c)=>`<div class="kpi ${c||""}"><b>${v}</b><span>${l}</span></div>`,mx=Math.max(1,W);
+const bar=(l,v,c,m)=>`<div class="row"><span>${l}</span><div class="bar"><i class="${c||""}" style="width:${v/m*100}%"></i></div><b>${v}</b></div>`,q=Math.max(1,spt);
+return`<h2>Dashboard</h2><div class="kpis">${k(W,"Work Orders")}${k(W-n("MTC issued"),"Open Work Orders","e")}${k(n("In production"),"In production")}${k(+DS.so_open,"Open Sales Orders")}${k(pass,"Spectro passed","g")}${k(fail,"Spectro failed","r")}${k(mtc,"MTC issued","g")}</div>
+<div class="grid"><div class="card"><h3>Work Orders by stage</h3>${ST.map(s=>bar(s,n(s),"",mx)).join("")}</div><div class="card"><h3>Quality stages</h3>${bar("Samples tested",spt,"q",q)}${bar("Passed",pass,"ok",q)}${bar("Failed (NCR)",fail,"bad",q)}${bar("MTC issued",mtc,"ok",q)}</div></div>
+${!W&&isAdmin&&canW?`<div class="card"><p>No data yet.</p><button class="btn p" data-a="demo">Load demo data</button></div>`:""}`}
 let TX=[],txUn=null;
+async function txLoad(){const{data}=await sb.from("transactions").select("*").order("created_at",{ascending:false}).limit(TXN);TX=data||[];if(!S.form)render()}
 function txStart(){if(txUn||!window.sb||!(isAdmin||can("dash")))return;
-const load=async()=>{const{data}=await sb.from("transactions").select("*").order("created_at",{ascending:false}).limit(200);TX=data||[];render()};
-load();const ch=sb.channel("txn-"+Math.random()).on("postgres_changes",{event:"INSERT",schema:"public",table:"transactions"},load).subscribe();txUn=()=>sb.removeChannel(ch)}
+txLoad();const ch=sb.channel("txn-"+Math.random()).on("postgres_changes",{event:"INSERT",schema:"public",table:"transactions"},()=>later("tx",txLoad,500)).subscribe();txUn=()=>sb.removeChannel(ch)}
 function txnV(){const lab=tn=>{const e=Object.entries(SCHEMA).find(([k,x])=>x.t==tn);return e&&MODS[e[0].slice(4)]?MODS[e[0].slice(4)].n:tn};
 const skip=["created_at","created_by"],sum=r=>{if(r.action=="INSERT")return"Created";if(r.action=="DELETE")return"Deleted";
 const o=r.old_data||{},n=r.new_data||{};const c=Object.keys(n).filter(k=>!skip.includes(k)&&JSON.stringify(o[k])!=JSON.stringify(n[k]));
 return c.map(k=>k+": "+(o[k]==null?"-":typeof o[k]=="object"?"...":o[k])+" → "+(n[k]==null?"-":typeof n[k]=="object"?"...":n[k])).join("; ")||"Updated"};
-return`<h2>Transactions</h2><p class="mute">Live log of every change, recorded by the database. Newest first (last 200).</p><div class="card scroll"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Module</th><th>Record</th><th>Details</th></tr></thead><tbody>${TX.map(r=>`<tr><td>${H(new Date(r.created_at).toLocaleString())}</td><td>${H(r.changed_by_name||"System")}</td><td><b>${r.action=="INSERT"?"Created":r.action=="UPDATE"?"Updated":"Deleted"}</b></td><td>${H(lab(r.table_name))}</td><td>${H(r.record_id||"")}</td><td>${H(sum(r))}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No transactions yet.</td></tr>'}</tbody></table></div>`}
-function stockV(){const m={};["grn","fgr","dn"].forEach(k=>D(k).forEach(r=>{const i=r.item.trim(),o=m[t(i)]||(m[t(i)]={i,in:0,out:0});k=="dn"?o.out+=+r.qty:o.in+=+r.qty}));
+return`<h2>Transactions</h2><p class="mute">Live log of every change, recorded by the database. Newest first.</p><div class="card scroll"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Module</th><th>Record</th><th>Details</th></tr></thead><tbody>${TX.map(r=>`<tr><td>${H(new Date(r.created_at).toLocaleString())}</td><td>${H(r.changed_by_name||"System")}</td><td><b>${r.action=="INSERT"?"Created":r.action=="UPDATE"?"Updated":"Deleted"}</b></td><td>${H(lab(r.table_name))}</td><td>${H(r.record_id||"")}</td><td>${H(sum(r))}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No transactions yet.</td></tr>'}</tbody></table></div>${TX.length>=TXN?'<div class="tools"><button class="btn" data-a="txmore">Show more</button></div>':""}`}
+function stockV(){const m=STK;
 const rows=Object.values(m);return`<h2>Stock</h2><p class="mute">Calculated from GRN and Finished Goods Receipts (in) and Dispatch Notes (out).</p><div class="card scroll"><table><thead><tr><th>Item</th><th>In (tons)</th><th>Out (tons)</th><th>Balance</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${H(o.i)}</td><td>${o.in}</td><td>${o.out}</td><td><b>${o.in-o.out}</b></td></tr>`).join("")||'<tr><td colspan="4" class="mute">No stock movements yet.</td></tr>'}</tbody></table></div>`}
 function list(k){const m=MODS[k],cs=m.f.filter(f=>f[2]!="spectro").slice(0,6),rs=D(k);
 const tg=v=>`<span class="tag ${v=="Pass"?"ok":v=="Fail"||/hold/.test(v)?"bad":""}">${H(v)}</span>`;
-return`<div class="bar2"><h2 style="flex:1">${m.n}</h2>${wr(k)?`<button class="btn p" data-a="new" data-k="${k}">New ${m.n}</button>`:'<span class="tag">View only</span>'}</div>${S.msg?`<div class="msg" role="status">${H(S.msg)}</div>`:""}<div class="card scroll"><table><thead><tr><th>No</th>${cs.map(f=>`<th>${f[1]}</th>`).join("")}${k=="spectro"?"<th>Result</th>":""}<th></th></tr></thead><tbody>${rs.map((r,i)=>`<tr class="r" data-a="edit" data-k="${k}" data-i="${i}"><td><b>${r.id}</b></td>${cs.map(f=>`<td>${f[2]=="select"&&f[0]=="status"?tg(r[f[0]]||""):H(r[f[0]])}</td>`).join("")}${k=="spectro"?`<td>${tg(r.result)}</td>`:""}<td>${acts(k,r,i)}</td></tr>`).join("")||`<tr><td colspan="9" class="mute">Nothing here yet.</td></tr>`}</tbody></table></div>`}
+return`<div class="bar2"><h2 style="flex:1">${m.n}</h2>${wr(k)?`<button class="btn p" data-a="new" data-k="${k}">New ${m.n}</button>`:'<span class="tag">View only</span>'}</div>${S.msg?`<div class="msg" role="status">${H(S.msg)}</div>`:""}<div class="tools"><input id="q" type="search" placeholder="Search ${m.n} (number, customer, item...)" aria-label="Search" value="${H(P.q)}"></div><div class="card scroll"><table><thead><tr><th>No</th>${cs.map(f=>`<th>${f[1]}</th>`).join("")}${k=="spectro"?"<th>Result</th>":""}<th></th></tr></thead><tbody>${rs.map((r,i)=>`<tr class="r" data-a="edit" data-k="${k}" data-i="${i}"><td><b>${r.id}</b></td>${cs.map(f=>`<td>${f[2]=="select"&&f[0]=="status"?tg(r[f[0]]||""):H(r[f[0]])}</td>`).join("")}${k=="spectro"?`<td>${tg(r.result)}</td>`:""}<td>${acts(k,r,i)}</td></tr>`).join("")||`<tr><td colspan="9" class="mute">${P.loading?"Loading...":P.q.trim()?"No match.":"Nothing here yet."}</td></tr>`}</tbody></table></div><div class="tools"><span class="mute sm" style="flex:1">${P.total?`${P.page*P.size+1}-${Math.min(P.total,(P.page+1)*P.size)} of ${P.total}`:""}</span><button class="btn s" data-a="prev"${P.page?"":" disabled"}>Previous</button><button class="btn s" data-a="next"${(P.page+1)*P.size<P.total?"":" disabled"}>Next</button></div>`}
 function form(){const{k,v,id}=S.form,m=MODS[k];
 const fld=([fid,l,ty,op,opt])=>{const x=v[fid]??"";
 if(ty=="select")return`<label>${l}<select id="f_${fid}">${op.map(o=>`<option${o==x?" selected":""}>${o}</option>`).join("")}</select></label>`;
-if(ty.startsWith("ref:")){const rk=ty.slice(4);return`<label>${l}<select id="f_${fid}">${opt?'<option value="">None</option>':'<option value="">Select...</option>'}${D(rk).map(r=>`<option value="${r.id}"${r.id==x?" selected":""}>${r.id} ${H(r.customer||r.item||r.sample||"")}</option>`).join("")}</select></label>`}
+if(ty.startsWith("ref:")){const rk=ty.slice(4);return`<label>${l}<input id="f_${fid}" list="dl_${fid}" data-ref="${rk}" autocomplete="off" placeholder="${opt?"Optional. Type to search...":"Type to search..."}" value="${H(x)}"><datalist id="dl_${fid}">${x?`<option value="${H(x)}">`:""}${optsHtml(REFC[rk]?REFC[rk].rows:[])}</datalist></label>`}
 if(ty=="spectro"){const c=x||EL.map(e=>({e,min:"",max:"",ach:""}));return`<div style="grid-column:1/-1"><span class="mute sm">${l} (required range and achieved value)</span><div class="scroll"><table><thead><tr><th>Element</th><th>Min</th><th>Max</th><th>Achieved</th><th>Result</th><th></th></tr></thead><tbody id="srb">${c.map(srRow).join("")}</tbody></table></div><button class="btn s" type="button" data-a="addrow">+ Add element</button></div>`}
 return`<label>${l}<input id="f_${fid}" type="${ty}" value="${H(x)}"${ty=="number"?' step="any" min="0"':""}></label>`};
 const w=wr(k);return`<h2>${id?(w?"Edit ":"")+id:"New "+m.n}</h2><div class="card"><div class="fg" id="fgd">${m.f.map(fld).join("")}</div><div id="hint" class="mute"></div>${S.err?`<div class="msg bad" role="alert">${H(S.err)}</div>`:""}<div class="bar2">${w?'<button class="btn p" data-a="save">Save</button>':""}<button class="btn" data-a="cancel">${w?"Cancel":"Back"}</button><button class="btn" onclick="print()">Print</button>${id&&isAdmin&&canW?'<button class="btn" data-a="del">Delete</button>':""}</div></div>`}
@@ -112,7 +133,8 @@ if(boot==2){a.innerHTML=msgView("Could not load your data.",`<p class="mute sm">
 if(!isAdmin&&!KEYS.some(can)){a.innerHTML=noAccess();return}
 let v=S.view;if(v=="txn"&&!(isAdmin||can("dash"))||v=="users"&&!isAdmin||(v=="dash"||v=="stock")&&!can(v)||MODS[v]&&!can(v))v=home();
 let b;if(S.form&&can(S.form.k))b=form();else if(v=="dash")b=dash();else if(v=="stock")b=stockV();else if(v=="txn")b=txnV();else if(v=="users")b=users();else b=list(v);
-a.innerHTML=shell(b)+stepModal();hint();{const g=$("#stepGo");if(g)g.focus()}document.querySelectorAll(".sr").forEach(calc);
+const af=document.activeElement,keep=af&&af.id=="q"?af.selectionStart:null;
+a.innerHTML=shell(b)+stepModal();hint();{const g=$("#stepGo");if(g)g.focus()}if(keep!=null){const q=$("#q");if(q){q.focus();q.setSelectionRange(keep,keep)}}if(S.form)fillRefs();document.querySelectorAll(".sr").forEach(calc);
 if(S.form&&!wr(S.form.k))document.querySelectorAll("#fgd input,#fgd select").forEach(x=>x.disabled=true)}
 function stepModal(){if(!S.step)return"";const st=S.step,r=D(st.k)[st.i],x=r&&A[st.k]&&A[st.k][st.j];if(!x){S.step=null;return""}
 const to=MODS[x[1]].n,from=MODS[st.k].n,v=x[2](r),fl=MODS[x[1]].f;
@@ -134,21 +156,24 @@ const ok=(v[1]===""||+v[3]>=+v[1])&&(v[2]===""||+v[3]<=+v[2]);c.textContent=ok?"
 async function submit(){const{k,id}=S.form,m=MODS[k],o={};let err="";
 if(!wr(k))return;
 for(const[fid,l,ty,op,opt]of m.f){if(ty=="spectro"){o[fid]=[...document.querySelectorAll(".sr")].map(r=>{const i=r.querySelectorAll("input");return{e:i[0].value.trim(),min:i[1].value,max:i[2].value,ach:i[3].value}}).filter(x=>x.e&&x.ach!=="");if(!o[fid].length)err=err||"Enter at least one achieved value."}
-else{o[fid]=$("#f_"+fid).value.trim();if(!o[fid]&&!opt&&ty!="date")err=err||l+" is required."}if(ty=="number"&&+o[fid]<0)err=err||l+" cannot be negative."}
+else{o[fid]=$("#f_"+fid).value.trim();if(!o[fid]&&!opt&&ty!="date")err=err||l+" is required.";if(o[fid]&&ty.startsWith("ref:")&&!(await g(ty.slice(4),o[fid])))err=err||l+" "+o[fid]+" was not found. Pick one from the suggestions."}if(ty=="number"&&+o[fid]<0)err=err||l+" cannot be negative."}
 if(k=="spectro")o.result=judge(o.comp);
-if(k=="mtc"){const s=D("spectro").find(x=>x.id==o.spectro);if(s&&s.result!="Pass")err=err||"MTC needs a Spectro Report that passed. Quality must decide on failed material first."}
+if(k=="mtc"){const s=await g("spectro",o.spectro);if(s&&s.result!="Pass")err=err||"MTC needs a Spectro Report that passed. Quality must decide on failed material first."}
 if(k=="dn"&&!id&&+o.qty>stock(o.item))err=err||`Only ${stock(o.item)} tons in stock for this item.`;
 if(!id&&!err&&ONCE.has(k)&&o[LINK[k]]){const ex=await rows(k,LINK[k],o[LINK[k]]);if(ex.length)err=`${m.n} ${ex.map(y=>y.id).join(", ")} already exists for ${o[LINK[k]]}. It cannot be created again.`}
 if(err){S.err=err;S.form.v=Object.assign(S.form.v,o);render();return}
-try{let r;if(id){r={...D(k).find(x=>x.id==id),...o};await DB.doc("rec_"+k+"/"+id).set(r)}else r=await add(k,o);
+try{let r;if(id){r={...S.form.v,...o};await DB.doc("rec_"+k+"/"+id).set(r)}else r=await add(k,o);
 await chain(k,o);S.msg=r.id+" saved. Linked statuses updated.";if(k=="spectro"&&o.result=="Fail")S.msg=r.id+" failed. Work Order is on hold until Quality decides.";
-S.form=null;S.err="";S.view=k}catch(e){S.err="Could not save: "+(e.message||e.code||"error")}render()}
+S.form=null;S.err="";S.view=k;if(P.k==k)P.page=0;await refreshView()}catch(e){S.err="Could not save: "+(e.message||e.code||"error")}render()}
 async function setAcc(id,perms,label){await DB.doc("access/"+id).set({perms,label})}
 document.addEventListener("click",async e=>{const a=e.target.closest("[data-a]");if(!a)return;const d=a.dataset;
 try{switch(d.a){
 case"out":await window.signOut();return;case"menu":S.menu=!S.menu;break;
 case"retry":await start();return;
-case"nav":S={view:d.v,form:null,menu:false,msg:"",err:""};break;
+case"nav":S={view:d.v,form:null,menu:false,msg:"",err:""};if(MODS[d.v]&&P.k!=d.v)openList(d.v);render();await refreshView();return;
+case"prev":if(P.page>0){P.page--;await loadPage()}break;
+case"next":if((P.page+1)*P.size<P.total){P.page++;await loadPage()}break;
+case"txmore":TXN+=100;await txLoad();break;
 case"new":S.form={k:d.k,v:{status:MODS[d.k].f.find(f=>f[0]=="status")?.[3][0]},id:null};S.err="";S.msg="";break;
 case"edit":if(e.target.closest("button"))return;S.form={k:d.k,v:{...D(d.k)[d.i]},id:D(d.k)[d.i].id};S.err="";break;
 case"act":{const st={k:d.k,i:d.i,j:d.j},r=D(st.k)[st.i],t=A[st.k][st.j][1];
@@ -160,13 +185,15 @@ case"stepGo":{const st=S.step,r=D(st.k)[st.i],x=A[st.k][st.j];
 if(ONCE.has(x[1])){const ex=await rows(x[1],LINK[x[1]],r.id);if(ex.length){st.dup=ex.map(y=>y.id);break}}
 S.step=null;S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}
 case"save":await submit();return;case"cancel":S.form=null;S.err="";break;
-case"del":if(confirm("Delete "+S.form.id+"?")){await DB.doc("rec_"+S.form.k+"/"+S.form.id).delete();S.form=null}break;
-case"demo":await demo();break;
+case"del":if(confirm("Delete "+S.form.id+"?")){await DB.doc("rec_"+S.form.k+"/"+S.form.id).delete();S.form=null;await refreshView()}break;
+case"demo":await demo();DS=null;await refreshView();break;
 case"req":await DB.doc("requests/"+me.id).set({at:Date.now()});requested=true;break;
 case"grant":await setAcc(d.id,{...TPL[d.t].p},TPL[d.t].l);DB.doc("requests/"+d.id).delete().catch(()=>{});break;
 case"revoke":if(confirm("Remove access for "+nm(d.id)+"?"))await DB.doc("access/"+d.id).delete();break}}catch(x){S.msg="Action failed: "+(x.message||x.code||"error")}
 render()});
-document.addEventListener("input",async e=>{const r=e.target.closest(".sr");if(r)calc(r);if(e.target.id=="f_item"||e.target.id=="f_qty")hint();
+document.addEventListener("input",async e=>{if(e.target.id=="q"){P.q=e.target.value;later("q",async()=>{P.page=0;try{await loadPage()}catch(x){S.msg="Search failed: "+x.message}render()},350)}
+const ri=e.target.closest("input[data-ref]");if(ri)later("ref"+ri.id,async()=>{try{const r=await DB.page("rec_"+ri.dataset.ref,{size:15,q:ri.value});const dl=$("#dl_"+ri.id.slice(2));if(dl)dl.innerHTML=optsHtml(r.rows)}catch(x){}},300);
+const r=e.target.closest(".sr");if(r)calc(r);if(e.target.id=="f_item"||e.target.id=="f_qty")hint();
 if(e.target.id=="us"){const q=e.target.value.trim(),f=$("#found");if(q.length<2){f.innerHTML="";return}
 const rs=await U.search(q);f.innerHTML=rs.filter(p=>!accList.some(a=>a.id==p.id)).slice(0,6).map(p=>{NM[p.id]=p.name;return`<div class="bar2"><span style="flex:1">${H(p.name)}</span><button class="btn s" data-a="grant" data-id="${p.id}" data-t="viewer">Add as Viewer</button></div>`}).join("")||'<p class="mute sm">No match.</p>'}});
 document.addEventListener("change",async e=>{if(!e.target.classList.contains("mx"))return;const c=e.target.closest("[data-uid]"),p={};
@@ -174,7 +201,7 @@ c.querySelectorAll(".mx").forEach(s=>{if(s.value!="none")p[s.dataset.k]=s.value}
 document.addEventListener("keydown",e=>{if(e.key=="Escape"&&S.menu){S.menu=false;render()}});
 let DG="",LOCAL=false;
 async function start(){boot=0;render();DB=makeDB(window.sb);U=makeU(window.sb);
-try{await U.me()}catch(e){DG=e.message||"Profile not found. Did you run schema.sql?";boot=2;render();return}
+try{await U.me()}catch(e){if(e.message=="SESSION_INVALID"){try{await sb.auth.signOut()}catch(x){}showLogin(false);note("Your saved sign-in is no longer valid. Please sign in again.");return}DG=e.message||"Profile not found. Did you run schema.sql?";boot=2;render();return}
 me=await U.me();isAdmin=!!(me.isOwner||me.canEdit);canW=(await U.can("data.write"))!==false;
 if(me.id)DB.doc("access/"+me.id).onSnapshot(s=>{acc=s.exists?s.data():null;sync();render()},()=>{});
 if(isAdmin){DB.collection("access").onSnapshot(s=>{accList=s.docs.map(d=>({...d.data(),id:d.id}));loadNames();render()},()=>{});

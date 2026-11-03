@@ -72,6 +72,34 @@ function makeDB(sb) {
       };
       return self;
     },
+    // One page of a module list, newest first, with optional search. Returns {rows, total}.
+    async page(c, { page = 0, size = 25, q = '' } = {}) {
+      const s = SCHEMA[c];
+      let qq = sb.from(s.t).select('*', { count: 'exact' });
+      const e = String(q).replace(/[%,()*"\\]/g, ' ').trim();
+      if (e) {
+        const cols = ['id', ...Object.keys(s.c).filter(k => s.c[k] === 't' && k !== 'by' && k !== 'status')];
+        qq = qq.or(cols.map(k => `${col(k)}.ilike.%${e}%`).join(','));
+      }
+      const { data, error, count } = await qq.order('created_at', { ascending: false }).order('id', { ascending: false })
+        .range(page * size, page * size + size - 1);
+      if (error) throw error;
+      return { rows: data.map(r => fromRow(s, r)), total: count ?? 0 };
+    },
+    // Records whose link field is one of the given ids (used for the step buttons on a page).
+    async byIds(c, field, ids) {
+      const s = SCHEMA[c];
+      const { data, error } = await sb.from(s.t).select('*').in(col(field), ids);
+      if (error) throw error;
+      return data.map(r => fromRow(s, r));
+    },
+    // One realtime channel for many collections; cb(collection) on any change.
+    onChange(colls, cb) {
+      const ch = sb.channel('chg' + Math.random());
+      colls.forEach(c => ch.on('postgres_changes', { event: '*', schema: 'public', table: SCHEMA[c].t }, () => cb(c)));
+      ch.subscribe();
+      return () => sb.removeChannel(ch);
+    },
     collection: c => {
       const s = SCHEMA[c];
       return {
@@ -91,6 +119,7 @@ function makeU(sb) {
   return {
     async me() {
       const { data: { user } } = await sb.auth.getUser();
+      if (!user) throw new Error('SESSION_INVALID');
       const { data: p, error } = await sb.from('profiles').select('full_name,email,role').eq('id', user.id).single();
       if (error) throw error;
       const adm = p.role === 'admin';

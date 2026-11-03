@@ -97,7 +97,7 @@ function form(){const{k,v,id}=S.form,m=MODS[k];
 const fld=([fid,l,ty,op,opt])=>{const x=v[fid]??"";
 if(ty=="select")return`<label>${l}<select id="f_${fid}">${op.map(o=>`<option${o==x?" selected":""}>${o}</option>`).join("")}</select></label>`;
 if(ty.startsWith("ref:")){const rk=ty.slice(4);return`<label>${l}<select id="f_${fid}">${opt?'<option value="">None</option>':'<option value="">Select...</option>'}${D(rk).map(r=>`<option value="${r.id}"${r.id==x?" selected":""}>${r.id} ${H(r.customer||r.item||r.sample||"")}</option>`).join("")}</select></label>`}
-if(ty=="spectro"){const c=x||EL.map(e=>({e,min:"",max:"",ach:""}));return`<div style="grid-column:1/-1"><span class="mute sm">${l} (required range and achieved value)</span><div class="scroll"><table><thead><tr><th>Element</th><th>Min</th><th>Max</th><th>Achieved</th><th>Result</th></tr></thead><tbody>${c.map(r=>`<tr class="sr">${["e","min","max","ach"].map(q=>`<td><input value="${H(r[q])}" ${q=="e"?"":'type="number" step="any"'} aria-label="${q}"></td>`).join("")}<td class="res">-</td></tr>`).join("")}</tbody></table></div></div>`}
+if(ty=="spectro"){const c=x||EL.map(e=>({e,min:"",max:"",ach:""}));return`<div style="grid-column:1/-1"><span class="mute sm">${l} (required range and achieved value)</span><div class="scroll"><table><thead><tr><th>Element</th><th>Min</th><th>Max</th><th>Achieved</th><th>Result</th><th></th></tr></thead><tbody id="srb">${c.map(srRow).join("")}</tbody></table></div><button class="btn s" type="button" data-a="addrow">+ Add element</button></div>`}
 return`<label>${l}<input id="f_${fid}" type="${ty}" value="${H(x)}"${ty=="number"?' step="any" min="0"':""}></label>`};
 const w=wr(k);return`<h2>${id?(w?"Edit ":"")+id:"New "+m.n}</h2><div class="card"><div class="fg" id="fgd">${m.f.map(fld).join("")}</div><div id="hint" class="mute"></div>${S.err?`<div class="msg bad" role="alert">${H(S.err)}</div>`:""}<div class="bar2">${w?'<button class="btn p" data-a="save">Save</button>':""}<button class="btn" data-a="cancel">${w?"Cancel":"Back"}</button><button class="btn" onclick="print()">Print</button>${id&&isAdmin&&canW?'<button class="btn" data-a="del">Delete</button>':""}</div></div>`}
 function users(){const ts=Object.keys(TPL);
@@ -128,6 +128,7 @@ return`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="stt">
 document.addEventListener("keydown",e=>{if(e.key=="Escape"&&S.step){S.step=null;render()}});
 function hint(){const h=$("#hint");if(!h||!S.form||!["so","dn"].includes(S.form.k))return;const i=$("#f_item"),q=$("#f_qty");if(!i)return;const s=stock(i.value),n=+q.value||0;
 h.textContent=i.value?`In stock: ${s} tons. `+(S.form.k=="so"?(n>s?`Shortfall ${n-s} tons: create a Work Order for it after saving.`:"Stock covers the full order."):(n>s?"Not enough stock for this dispatch.":"")):""}
+const srRow=r=>`<tr class="sr">${["e","min","max","ach"].map(q=>`<td><input value="${H(r[q])}" ${q=="e"?"":'type="number" step="any"'} aria-label="${q}"></td>`).join("")}<td class="res">-</td><td><button class="btn s" type="button" data-a="delrow" aria-label="Remove this row">Remove</button></td></tr>`;
 function calc(r){const v=[...r.querySelectorAll("input")].map(x=>x.value),c=r.querySelector(".res");if(v[3]===""||(v[1]===""&&v[2]==="")){c.textContent="-";c.className="res";return}
 const ok=(v[1]===""||+v[3]>=+v[1])&&(v[2]===""||+v[3]<=+v[2]);c.textContent=ok?"Within range":"Out of range";c.className="res "+(ok?"ok":"bad")}
 async function submit(){const{k,id}=S.form,m=MODS[k],o={};let err="";
@@ -153,6 +154,8 @@ case"edit":if(e.target.closest("button"))return;S.form={k:d.k,v:{...D(d.k)[d.i]}
 case"act":{const st={k:d.k,i:d.i,j:d.j},r=D(st.k)[st.i],t=A[st.k][st.j][1];
 if(ONCE.has(t)){const ex=await rows(t,LINK[t],r.id);if(ex.length)st.dup=ex.map(y=>y.id)}S.step=st;break}
 case"stepNo":S.step=null;break;
+case"addrow":{const b=$("#srb");if(!b)return;b.insertAdjacentHTML("beforeend",srRow({e:"",min:"",max:"",ach:""}));const n=b.lastElementChild;calc(n);n.querySelector("input").focus();return}
+case"delrow":{const tr=a.closest("tr");if(tr)tr.remove();return}
 case"stepGo":{const st=S.step,r=D(st.k)[st.i],x=A[st.k][st.j];
 if(ONCE.has(x[1])){const ex=await rows(x[1],LINK[x[1]],r.id);if(ex.length){st.dup=ex.map(y=>y.id);break}}
 S.step=null;S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}

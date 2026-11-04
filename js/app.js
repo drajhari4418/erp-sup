@@ -28,7 +28,7 @@ const LINK={wo:"so",dn:"so",ind:"wo",spectro:"wo",fgr:"wo",po:"ind",grn:"po",mtc
 const ONCE=new Set(["wo","spectro","mtc","po","grn","inv"]);
 /* ---------- state and permissions ---------- */
 let DB=null,U=null,me={},boot=0,isAdmin=false,canW=true,acc=null,accList=[],reqList=[],cache={},unsubs={},NM={},requested=false;
-let P={k:"",page:0,size:25,q:"",rows:[],total:0,kids:{},loading:false},STK={},DS=null,TXN=100;
+let P={k:"",page:0,size:25,q:"",rows:[],total:0,kids:{},loading:false},STK={},DS=null;
 const REFC={};let LOADERR="";let FR={key:"",loading:false,children:{}};
 let S={view:"dash",form:null,menu:false,msg:"",err:""};
 const perm=k=>isAdmin?"edit":(acc&&acc.perms&&acc.perms[k])||"none";
@@ -116,14 +116,15 @@ return`<h2>Dashboard</h2><div class="kpis">${k(W,"Work Orders")}${k(W-n("MTC iss
 <div class="grid"><div class="card"><h3>Work Orders by stage</h3>${ST.map(s=>bar(s,n(s),"",mx)).join("")}</div><div class="card"><h3>Quality stages</h3>${bar("Samples tested",spt,"q",q)}${bar("Passed",pass,"ok",q)}${bar("Failed (NCR)",fail,"bad",q)}${bar("MTC issued",mtc,"ok",q)}</div></div>
 ${!W&&isAdmin&&canW?`<div class="card"><p>No data yet.</p><button class="btn p" data-a="demo">Load demo data</button></div>`:""}`}
 let TX=[],txUn=null;
-async function txLoad(){const{data}=await sb.from("transactions").select("*").order("created_at",{ascending:false}).limit(TXN);TX=data||[];if(!S.form)render()}
+async function txLoad(){const list=filter=>filter(sb.from("transactions").select("*").order("created_at",{ascending:false}).limit(5)),[dushyant,emptyName,noName]=await Promise.all([list(q=>q.eq("changed_by_name","Dushyant")),list(q=>q.eq("changed_by_name","")),list(q=>q.is("changed_by_name",null))]);
+const system=[...(emptyName.data||[]),...(noName.data||[])].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);TX=[...(dushyant.data||[]),...system].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));if(!S.form)render()}
 function txStart(){if(txUn||!window.sb||!(isAdmin||can("dash")))return;
 txLoad();const ch=sb.channel("txn-"+Math.random()).on("postgres_changes",{event:"INSERT",schema:"public",table:"transactions"},()=>later("tx",txLoad,500)).subscribe();txUn=()=>sb.removeChannel(ch)}
 function txnV(){const lab=tn=>{const e=Object.entries(SCHEMA).find(([k,x])=>x.t==tn);return e&&MODS[e[0].slice(4)]?MODS[e[0].slice(4)].n:tn};
 const skip=["created_at","created_by"],sum=r=>{if(r.action=="INSERT")return"Created";if(r.action=="DELETE")return"Deleted";
 const o=r.old_data||{},n=r.new_data||{};const c=Object.keys(n).filter(k=>!skip.includes(k)&&JSON.stringify(o[k])!=JSON.stringify(n[k]));
 return c.map(k=>k+": "+(o[k]==null?"-":typeof o[k]=="object"?"...":o[k])+" → "+(n[k]==null?"-":typeof n[k]=="object"?"...":n[k])).join("; ")||"Updated"};
-return`<h2>Transactions</h2><p class="mute">Live log of every change, recorded by the database. Newest first.</p><div class="card scroll"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Module</th><th>Record</th><th>Details</th></tr></thead><tbody>${TX.map(r=>`<tr><td>${H(new Date(r.created_at).toLocaleString())}</td><td>${H(r.changed_by_name||"System")}</td><td><b>${r.action=="INSERT"?"Created":r.action=="UPDATE"?"Updated":"Deleted"}</b></td><td>${H(lab(r.table_name))}</td><td>${H(r.record_id||"")}</td><td>${H(sum(r))}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No transactions yet.</td></tr>'}</tbody></table></div>${TX.length>=TXN?'<div class="tools"><button class="btn" data-a="txmore">Show more</button></div>':""}`}
+return`<h2>Transactions</h2><p class="mute">Latest five Dushyant and five System changes, newest first.</p><div class="card scroll"><table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Module</th><th>Record</th><th>Details</th></tr></thead><tbody>${TX.map(r=>`<tr><td>${H(new Date(r.created_at).toLocaleString())}</td><td>${H(r.changed_by_name||"System")}</td><td><b>${r.action=="INSERT"?"Created":r.action=="UPDATE"?"Updated":"Deleted"}</b></td><td>${H(lab(r.table_name))}</td><td>${H(r.record_id||"")}</td><td>${H(sum(r))}</td></tr>`).join("")||'<tr><td colspan="6" class="mute">No matching Dushyant or System transactions yet.</td></tr>'}</tbody></table></div>`}
 function stockV(){const m=STK;
 const rows=Object.values(m);return`<h2>Stock</h2><p class="mute">Calculated from GRN and Finished Goods Receipts (in) and Dispatch Notes (out).</p><div class="card scroll"><table><thead><tr><th>Item</th><th>In (tons)</th><th>Out (tons)</th><th>Balance</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${H(o.i)}</td><td>${o.in}</td><td>${o.out}</td><td><b>${o.in-o.out}</b></td></tr>`).join("")||'<tr><td colspan="4" class="mute">No stock movements yet.</td></tr>'}</tbody></table></div>`}
 function list(k){const m=MODS[k],cs=m.f.filter(f=>f[2]!="spectro").slice(0,6),rs=D(k);
@@ -188,7 +189,6 @@ case"retry":await start();return;
 case"nav":S={view:d.v,form:null,menu:false,msg:"",err:""};if(MODS[d.v]&&P.k!=d.v)openList(d.v);render();await refreshView();return;
 case"prev":if(P.page>0){P.page--;await loadPage()}break;
 case"next":if((P.page+1)*P.size<P.total){P.page++;await loadPage()}break;
-case"txmore":TXN+=100;await txLoad();break;
 case"new":S.form={k:d.k,v:{status:MODS[d.k].f.find(f=>f[0]=="status")?.[3][0]},id:null};S.err="";S.msg="";break;
 case"edit":if(e.target.closest("button"))return;S.form={k:d.k,v:{...D(d.k)[d.i]},id:D(d.k)[d.i].id};S.err="";break;
 case"openrec":{if(formDirty()&&!confirm("Leave this form? Unsaved changes will be lost."))return;const r=await g(d.k,d.id);if(!r){S.msg="Related record "+d.id+" could not be opened.";break}S.view=d.k;S.form={k:d.k,v:r,id:d.id};S.err="";S.msg="";break}

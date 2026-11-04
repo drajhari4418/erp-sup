@@ -1,0 +1,9 @@
+# Dependencies and test output
+node_modules/
+cypress/videos/
+cypress/screenshots/
+
+# OS / editor files
+desktop.ini
+.DS_Store
+Thumbs.db

@@ -29,7 +29,7 @@ const ONCE=new Set(["wo","spectro","mtc","po","grn","inv"]);
 /* ---------- state and permissions ---------- */
 let DB=null,U=null,me={},boot=0,isAdmin=false,canW=true,acc=null,accList=[],reqList=[],cache={},unsubs={},NM={},requested=false;
 let P={k:"",page:0,size:25,q:"",rows:[],total:0,kids:{},loading:false},STK={},DS=null,TXN=100;
-const REFC={};let LOADERR="";
+const REFC={};let LOADERR="";let FR={key:"",loading:false,children:{}};
 let S={view:"dash",form:null,menu:false,msg:"",err:""};
 const perm=k=>isAdmin?"edit":(acc&&acc.perms&&acc.perms[k])||"none";
 const can=k=>perm(k)!="none",wr=k=>perm(k)=="edit"&&canW;
@@ -68,7 +68,22 @@ if(md=="once"&&L.length)return`<span class="tag ok" title="${H(L.map(x=>x.id).jo
 if(md=="qty"){const s=L.reduce((n,x)=>n+ +x.qty,0);if(L.length&&s>=+r.qty)return`<span class="tag ok">✓ Dispatched ${s}/${r.qty} t</span> `;return wr(a[1])?`<button class="btn s" ${b}>+ ${a[0]}${s?` (${s}/${r.qty} t)`:""}</button>`:""}
 if(!wr(a[1]))return L.length?`<span class="tag">${a[0]} ×${L.length}</span> `:"";
 return`<button class="btn s${L.length?" dn":""}" ${b}>${L.length?"✓ ":"+ "}${a[0]}${L.length>1?" ×"+L.length:""}</button>`}).join("")}
+function flowState(k,r){
+if(k==="so")return r.status==="Closed"?["Complete","ok"]:r.status==="Part dispatched"?["In progress",""]:["Pending",""];
+if(k==="wo")return r.status==="On hold (NCR)"?["On hold","bad"]:["Finished","MTC issued"].includes(r.status)?["Complete","ok"]:["In progress",""];
+if(k==="ind")return r.status==="Received"?["Complete","ok"]:r.status==="PO raised"?["In progress",""]:["Pending",""];
+if(k==="po"){if(!can("grn"))return["Not tracked",""];const received=((P.kids.grn||{})[r.id]||[]).reduce((n,x)=>n+(+x.qty||0),0);return received>=+r.qty?["Complete","ok"]:received?["In progress",""]:["Pending",""]}
+if(k==="spectro")return r.result==="Fail"?["Reviewed: Fail","bad"]:r.result==="Pass"?["Complete","ok"]:["Pending",""];
+if(k==="dn")return !can("inv")?["Not tracked",""]:((P.kids.inv||{})[r.id]||[]).length?["Complete","ok"]:["Invoice pending",""];
+return ["Complete","ok"]}
+function flowBadge(k,r){const[s,c]=flowState(k,r);return`<span class="tag ${c}">${H(s)}</span>`}
 const g=async(k,id)=>{try{const s=await DB.doc("rec_"+k+"/"+id).get();return s.exists?s.data():null}catch(e){return null}};
+function formLinkKey(){if(!S.form)return"";const{k,v,id}=S.form;const refs=MODS[k].f.filter(f=>f[2].startsWith("ref:")).map(f=>f[2].slice(4)+":"+String(v[f[0]]||"").trim());return k+"/"+(id||"new")+"|"+refs.join("|")}
+function formLinks(k,v,id){const parents=MODS[k].f.filter(f=>f[2].startsWith("ref:")).map(f=>{const[fid,label,ty]=f,rk=ty.slice(4),rid=String(v[fid]||"").trim();return rid&&can(rk)?`<button class="btn s" data-a="openrec" data-k="${rk}" data-id="${H(rid)}">Open ${H(MODS[rk].n)} ${H(rid)}</button>`:""}).filter(Boolean);
+const children=(A[k]||[]).flatMap((a,j)=>{const target=a[1];if(!id||!can(target))return[];const found=(FR.children[target]||[]),mode=(AL[k]||[])[j]?.[1],items=found.map(r=>`<button class="btn s" data-a="openrec" data-k="${target}" data-id="${H(r.id)}">Open ${H(MODS[target].n)} ${H(r.id)}</button>`);if(wr(target)&&(!found.length||mode!=="once"))items.push(`<button class="btn s" data-a="newrel" data-k="${k}" data-j="${j}">+ New ${H(MODS[target].n)}</button>`);return items});
+const all=[...parents,...children];if(!all.length)return id&&FR.loading?'<div class="card"><h3>Related modules</h3><span class="mute">Loading linked records...</span></div>':"";return`<div class="card"><h3>Related modules</h3><div class="bar2" style="flex-wrap:wrap">${all.join("")}</div></div>`}
+function loadFormLinks(){if(!S.form)return;const key=formLinkKey();if(FR.key===key)return;const{k,id}=S.form;FR={key,loading:!!id,children:{}};if(!id){FR.loading=false;return}const jobs=(A[k]||[]).filter(a=>can(a[1])).map(async a=>{const target=a[1];try{FR.children[target]=await DB.byIds("rec_"+target,LINK[target],[id])}catch(e){FR.children[target]=[]}});Promise.all(jobs).then(()=>{if(S.form&&formLinkKey()===key){FR.loading=false;render()}})}
+function formDirty(){if(!S.form)return false;const{k,v}=S.form;return MODS[k].f.some(([fid,,ty])=>{if(ty==="spectro"){const cur=[...document.querySelectorAll(".sr")].map(r=>{const i=r.querySelectorAll("input");return{e:i[0].value.trim(),min:i[1].value,max:i[2].value,ach:i[3].value}});return JSON.stringify(cur)!==JSON.stringify(v[fid]||EL.map(e=>({e,min:"",max:"",ach:""})))}const el=$("#f_"+fid);return el&&el.value.trim()!==String(v[fid]??"")})}
 const upd=(k,id,d)=>DB.doc("rec_"+k+"/"+id).update(d).catch(()=>{});
 const rows=async(k,f,v)=>{try{return(await DB.collection("rec_"+k).where(f,"==",v).get()).docs.map(d=>d.data())}catch(e){return[]}};
 async function setWO(id,s,from){if(!id)return;const w=await g("wo",id);if(!w||(from&&!from.includes(w.status)))return;await upd("wo",id,{status:s})}
@@ -113,14 +128,14 @@ function stockV(){const m=STK;
 const rows=Object.values(m);return`<h2>Stock</h2><p class="mute">Calculated from GRN and Finished Goods Receipts (in) and Dispatch Notes (out).</p><div class="card scroll"><table><thead><tr><th>Item</th><th>In (tons)</th><th>Out (tons)</th><th>Balance</th></tr></thead><tbody>${rows.map(o=>`<tr><td>${H(o.i)}</td><td>${o.in}</td><td>${o.out}</td><td><b>${o.in-o.out}</b></td></tr>`).join("")||'<tr><td colspan="4" class="mute">No stock movements yet.</td></tr>'}</tbody></table></div>`}
 function list(k){const m=MODS[k],cs=m.f.filter(f=>f[2]!="spectro").slice(0,6),rs=D(k);
 const tg=v=>`<span class="tag ${v=="Pass"?"ok":v=="Fail"||/hold/.test(v)?"bad":""}">${H(v)}</span>`;
-return`<div class="bar2"><h2 style="flex:1">${m.n}</h2>${wr(k)?`<button class="btn p" data-a="new" data-k="${k}">New ${m.n}</button>`:'<span class="tag">View only</span>'}</div>${S.msg?`<div class="msg" role="status">${H(S.msg)}</div>`:""}<div class="tools"><input id="q" type="search" placeholder="Search ${m.n} (number, customer, item...)" aria-label="Search" value="${H(P.q)}"></div><div class="card scroll"><table><thead><tr><th>No</th>${cs.map(f=>`<th>${f[1]}</th>`).join("")}${k=="spectro"?"<th>Result</th>":""}<th></th></tr></thead><tbody>${rs.map((r,i)=>`<tr class="r" data-a="edit" data-k="${k}" data-i="${i}"><td><b>${r.id}</b></td>${cs.map(f=>`<td>${f[2]=="select"&&f[0]=="status"?tg(r[f[0]]||""):H(r[f[0]])}</td>`).join("")}${k=="spectro"?`<td>${tg(r.result)}</td>`:""}<td>${acts(k,r,i)}</td></tr>`).join("")||`<tr><td colspan="9" class="mute">${P.loading?"Loading...":P.q.trim()?"No match.":"Nothing here yet."}</td></tr>`}</tbody></table></div><div class="tools"><span class="mute sm" style="flex:1">${P.total?`${P.page*P.size+1}-${Math.min(P.total,(P.page+1)*P.size)} of ${P.total}`:""}</span><button class="btn s" data-a="prev"${P.page?"":" disabled"}>Previous</button><button class="btn s" data-a="next"${(P.page+1)*P.size<P.total?"":" disabled"}>Next</button></div>`}
+return`<div class="bar2"><h2 style="flex:1">${m.n}</h2>${wr(k)?`<button class="btn p" data-a="new" data-k="${k}">New ${m.n}</button>`:'<span class="tag">View only</span>'}</div>${S.msg?`<div class="msg" role="status">${H(S.msg)}</div>`:""}<div class="tools"><input id="q" type="search" placeholder="Search ${m.n} (number, customer, item...)" aria-label="Search" value="${H(P.q)}"></div><div class="card scroll"><table><thead><tr><th>No</th>${cs.map(f=>`<th>${f[1]}</th>`).join("")}${k=="spectro"?"<th>Result</th>":""}<th>Workflow</th><th></th></tr></thead><tbody>${rs.map((r,i)=>`<tr class="r" data-a="edit" data-k="${k}" data-i="${i}"><td><b>${r.id}</b></td>${cs.map(f=>`<td>${f[2]=="select"&&f[0]=="status"?tg(r[f[0]]||""):H(r[f[0]])}</td>`).join("")}${k=="spectro"?`<td>${tg(r.result)}</td>`:""}<td>${flowBadge(k,r)}</td><td>${acts(k,r,i)}</td></tr>`).join("")||`<tr><td colspan="10" class="mute">${P.loading?"Loading...":P.q.trim()?"No match.":"Nothing here yet."}</td></tr>`}</tbody></table></div><div class="tools"><span class="mute sm" style="flex:1">${P.total?`${P.page*P.size+1}-${Math.min(P.total,(P.page+1)*P.size)} of ${P.total}`:""}</span><button class="btn s" data-a="prev"${P.page?"":" disabled"}>Previous</button><button class="btn s" data-a="next"${(P.page+1)*P.size<P.total?"":" disabled"}>Next</button></div>`}
 function form(){const{k,v,id}=S.form,m=MODS[k];
 const fld=([fid,l,ty,op,opt])=>{const x=v[fid]??"";
 if(ty=="select")return`<label>${l}<select id="f_${fid}">${op.map(o=>`<option${o==x?" selected":""}>${o}</option>`).join("")}</select></label>`;
 if(ty.startsWith("ref:")){const rk=ty.slice(4);return`<label>${l}<input id="f_${fid}" list="dl_${fid}" data-ref="${rk}" autocomplete="off" placeholder="${opt?"Optional. Type to search...":"Type to search..."}" value="${H(x)}"><datalist id="dl_${fid}">${x?`<option value="${H(x)}">`:""}${optsHtml(REFC[rk]?REFC[rk].rows:[])}</datalist></label>`}
 if(ty=="spectro"){const c=x||EL.map(e=>({e,min:"",max:"",ach:""}));return`<div style="grid-column:1/-1"><span class="mute sm">${l} (required range and achieved value)</span><div class="scroll"><table><thead><tr><th>Element</th><th>Min</th><th>Max</th><th>Achieved</th><th>Result</th><th></th></tr></thead><tbody id="srb">${c.map(srRow).join("")}</tbody></table></div><button class="btn s" type="button" data-a="addrow">+ Add element</button></div>`}
 return`<label>${l}<input id="f_${fid}" type="${ty}" value="${H(x)}"${ty=="number"?' step="any" min="0"':""}></label>`};
-const w=wr(k);return`<h2>${id?(w?"Edit ":"")+id:"New "+m.n}</h2><div class="card"><div class="fg" id="fgd">${m.f.map(fld).join("")}</div><div id="hint" class="mute"></div>${S.err?`<div class="msg bad" role="alert">${H(S.err)}</div>`:""}<div class="bar2">${w?'<button class="btn p" data-a="save">Save</button>':""}<button class="btn" data-a="cancel">${w?"Cancel":"Back"}</button><button class="btn" onclick="print()">Print</button>${id&&isAdmin&&canW?'<button class="btn" data-a="del">Delete</button>':""}</div></div>`}
+const w=wr(k);return`<h2>${id?(w?"Edit ":"")+id:"New "+m.n}</h2><div class="card"><div class="fg" id="fgd">${m.f.map(fld).join("")}</div>${formLinks(k,v,id)}<div id="hint" class="mute"></div>${S.err?`<div class="msg bad" role="alert">${H(S.err)}</div>`:""}<div class="bar2">${w?'<button class="btn p" data-a="save">Save</button>':""}<button class="btn" data-a="cancel">${w?"Cancel":"Back"}</button><button class="btn" onclick="print()">Print</button>${id&&isAdmin&&canW?'<button class="btn" data-a="del">Delete</button>':""}</div></div>`}
 function users(){const ts=Object.keys(TPL);
 return`<h2>Users and access</h2><p class="mute">People create their own account on the sign-in screen. Search for them here by name or email, then grant module access.</p>
 <div class="card"><h3>Add a person</h3><input id="us" placeholder="Search by name" aria-label="Search people"><div id="found"></div></div>
@@ -134,7 +149,7 @@ if(!isAdmin&&!KEYS.some(can)){a.innerHTML=noAccess();return}
 let v=S.view;if(v=="txn"&&!(isAdmin||can("dash"))||v=="users"&&!isAdmin||(v=="dash"||v=="stock")&&!can(v)||MODS[v]&&!can(v))v=home();
 let b;if(S.form&&can(S.form.k))b=form();else if(v=="dash")b=dash();else if(v=="stock")b=stockV();else if(v=="txn")b=txnV();else if(v=="users")b=users();else b=list(v);
 const af=document.activeElement,keep=af&&af.id=="q"?af.selectionStart:null;
-a.innerHTML=shell(b)+stepModal();hint();{const g=$("#stepGo");if(g)g.focus()}if(keep!=null){const q=$("#q");if(q){q.focus();q.setSelectionRange(keep,keep)}}if(S.form)fillRefs();document.querySelectorAll(".sr").forEach(calc);
+ a.innerHTML=shell(b)+stepModal();hint();{const g=$("#stepGo");if(g)g.focus()}if(keep!=null){const q=$("#q");if(q){q.focus();q.setSelectionRange(keep,keep)}}if(S.form){fillRefs();loadFormLinks()}document.querySelectorAll(".sr").forEach(calc);
 if(S.form&&!wr(S.form.k))document.querySelectorAll("#fgd input,#fgd select").forEach(x=>x.disabled=true)}
 function stepModal(){if(!S.step)return"";const st=S.step,r=D(st.k)[st.i],x=r&&A[st.k]&&A[st.k][st.j];if(!x){S.step=null;return""}
 const to=MODS[x[1]].n,from=MODS[st.k].n,v=x[2](r),fl=MODS[x[1]].f;
@@ -176,6 +191,8 @@ case"next":if((P.page+1)*P.size<P.total){P.page++;await loadPage()}break;
 case"txmore":TXN+=100;await txLoad();break;
 case"new":S.form={k:d.k,v:{status:MODS[d.k].f.find(f=>f[0]=="status")?.[3][0]},id:null};S.err="";S.msg="";break;
 case"edit":if(e.target.closest("button"))return;S.form={k:d.k,v:{...D(d.k)[d.i]},id:D(d.k)[d.i].id};S.err="";break;
+case"openrec":{if(formDirty()&&!confirm("Leave this form? Unsaved changes will be lost."))return;const r=await g(d.k,d.id);if(!r){S.msg="Related record "+d.id+" could not be opened.";break}S.view=d.k;S.form={k:d.k,v:r,id:d.id};S.err="";S.msg="";break}
+case"newrel":{if(formDirty()&&!confirm("Leave this form? Unsaved changes will be lost."))return;const src=S.form.v,a=A[d.k][+d.j];S.view=a[1];S.form={k:a[1],v:a[2](src),id:null};S.err="";S.msg="";break}
 case"act":{const st={k:d.k,i:d.i,j:d.j},r=D(st.k)[st.i],t=A[st.k][st.j][1];
 if(ONCE.has(t)){const ex=await rows(t,LINK[t],r.id);if(ex.length)st.dup=ex.map(y=>y.id)}S.step=st;break}
 case"stepNo":S.step=null;break;
@@ -184,7 +201,7 @@ case"delrow":{const tr=a.closest("tr");if(tr)tr.remove();return}
 case"stepGo":{const st=S.step,r=D(st.k)[st.i],x=A[st.k][st.j];
 if(ONCE.has(x[1])){const ex=await rows(x[1],LINK[x[1]],r.id);if(ex.length){st.dup=ex.map(y=>y.id);break}}
 S.step=null;S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}
-case"save":await submit();return;case"cancel":S.form=null;S.err="";break;
+case"save":await submit();return;case"cancel":S.form=null;S.err="";if(MODS[S.view]&&P.k!=S.view){openList(S.view);await refreshView()}break;
 case"del":if(confirm("Delete "+S.form.id+"?")){await DB.doc("rec_"+S.form.k+"/"+S.form.id).delete();S.form=null;await refreshView()}break;
 case"demo":await demo();DS=null;await refreshView();break;
 case"req":await DB.doc("requests/"+me.id).set({at:Date.now()});requested=true;break;

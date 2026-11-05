@@ -24,3 +24,10 @@ Performance / scale (run scale.sql ONCE after the other SQL files)
 - Reference fields (Work Order, Sales Order...) are type-ahead boxes that query the database as you type.
 - Realtime changes refresh only the page you are looking at, and forms are never reset while you type.
 - Transactions shows the latest 100 with "Show more". Optional: select prune_transactions(365); deletes log entries older than a year.
+
+
+Deleted records (run deleted_records.sql once)
+- Admins get a Delete button on every row and inside each record. It asks for a reason first.
+- Every delete is copied by the database into deleted_record_entries (record, who, when, why), even deletes made from the SQL Editor.
+- Menu > Admin > Deleted records lists them, and Restore puts a record back exactly as it was (stock totals follow).
+- A record that other records depend on cannot be deleted until those are deleted first.

@@ -53,7 +53,7 @@ function showLogin(signup) {
     if (signup) {
       const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: $a('ln').value.trim() } } });
       if (error) return note(error.message);
-      return data.session ? start() : note('Account created. Confirm your email, then sign in.');
+      return data.session ? start() : note('Account created. Confirm your email, then sign in. An administrator must also approve your account before you can use the system.');
     }
     const { error } = await sb.auth.signInWithPassword({ email, password });
     error ? note(error.message) : start();

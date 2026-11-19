@@ -27,9 +27,11 @@ Deno.serve(async (request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const resendKey = Deno.env.get("RESEND_API_KEY");
-  const fromEmail = Deno.env.get("RESEND_FROM_EMAIL");
-  if (!supabaseUrl || !anonKey || !serviceKey || !resendKey || !fromEmail) {
+  const googleClientId = Deno.env.get("GOOGLE_CLIENT_ID");
+  const googleClientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET");
+  const googleRefreshToken = Deno.env.get("GOOGLE_REFRESH_TOKEN");
+  const fromEmail = Deno.env.get("GOOGLE_SENDER_EMAIL");
+  if (!supabaseUrl || !anonKey || !serviceKey || !googleClientId || !googleClientSecret || !googleRefreshToken || !fromEmail) {
     return json({ error: "Email service is not configured" }, 500);
   }
 
@@ -90,18 +92,85 @@ Deno.serve(async (request) => {
     // Only an administrator can send approval messages; the recipient is the approved user's address.
   }
 
-  return await sendEmail(resendKey, fromEmail, recipients, subject, html);
+  return await sendEmail(googleClientId, googleClientSecret, googleRefreshToken, fromEmail, recipients, subject, html);
 });
 
-async function sendEmail(apiKey: string, from: string, to: string[], subject: string, html: string) {
-  const response = await fetch("https://api.resend.com/emails", {
+async function sendEmail(
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string,
+  fromEmail: string,
+  to: string[],
+  subject: string,
+  html: string,
+) {
+  if (!isEmailAddress(fromEmail) || to.some((email) => !isEmailAddress(email))) {
+    return json({ error: "A valid Gmail sender and recipient address are required" }, 400);
+  }
+
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to, subject, html }),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  if (!tokenResponse.ok) {
+    const detail = await tokenResponse.text();
+    return json({ error: `Google authorization failed (${tokenResponse.status}): ${detail}` }, 502);
+  }
+
+  const tokenData = await tokenResponse.json();
+  if (typeof tokenData.access_token !== "string") {
+    return json({ error: "Google did not return an access token" }, 502);
+  }
+
+  const mimeMessage = [
+    `From: ${fromEmail}`,
+    `To: ${to.join(", ")}`,
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrapBase64(base64Encode(new TextEncoder().encode(html))),
+  ].join("\r\n");
+
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokenData.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ raw: base64UrlEncode(mimeMessage) }),
   });
   if (!response.ok) {
     const detail = await response.text();
-    return json({ error: `Email provider rejected the message (${response.status}): ${detail}` }, 502);
+    return json({ error: `Gmail rejected the message (${response.status}): ${detail}` }, 502);
   }
+
   return json({ sent: true });
+}
+
+function isEmailAddress(value: string) {
+  return /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(value) && !/[\r\n]/.test(value);
+}
+
+function base64Encode(bytes: Uint8Array) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function wrapBase64(value: string) {
+  return value.match(/.{1,76}/g)?.join("\r\n") || "";
+}
+
+function base64UrlEncode(value: string) {
+  return base64Encode(new TextEncoder().encode(value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }

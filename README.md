@@ -15,14 +15,18 @@ Setup
 
 Access email notifications
 - The Request access button emails the address(es) on ERP profiles with the `admin` role. When an administrator grants a user module access, that user receives an approval email.
-- Email is sent by the `supabase/functions/access-email` Edge Function through Resend. Create a Resend API key and verify the sender domain/address first.
+- Email is sent by the `supabase/functions/access-email` Edge Function through the Gmail API. It sends from the Gmail account authorized with Google OAuth; no custom domain is needed.
+- In Google Cloud Console, create a project, enable the Gmail API, configure the OAuth consent screen, and create an OAuth client. Add the OAuth Playground redirect URI (`https://developers.google.com/oauthplayground`) to the client. If the consent screen is in Testing mode, add the Gmail sender account as a test user.
+- In OAuth Playground settings, enable "Use your own OAuth credentials" and enter the client ID and secret. Authorize the scope `https://www.googleapis.com/auth/gmail.send` while signed into the Gmail account that should send the mail, exchange the code, and copy the returned refresh token.
+- Add these secrets in Supabase Edge Functions > Secrets (or use the CLI below): `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, and `GOOGLE_SENDER_EMAIL` (the same Gmail account authorized above). Keep all OAuth values private and only in Supabase secrets.
+- Google OAuth apps left in Testing mode can have refresh tokens that expire after seven days. For ongoing use, publish the OAuth app and complete any Google verification requirements shown for the Gmail send scope.
 - From this project folder, link the Supabase project and deploy the function with the Supabase CLI:
   `supabase link --project-ref YOUR_PROJECT_REF`
   `supabase functions deploy access-email`
-- Configure the function secrets (use a verified Resend sender address):
-  `supabase secrets set RESEND_API_KEY=re_... RESEND_FROM_EMAIL="Foundry ERP <notifications@yourdomain.com>" APP_URL=https://erp-sup.vercel.app`
-- The Supabase project URL and service role key are provided to the Edge Function by Supabase. Do not put the Resend key or service role key in the browser app.
-- The request notification goes to the email on each ERP admin profile; approval notices go to the email on the approved user's profile. `RESEND_FROM_EMAIL` must use a verified Resend domain.
+- Configure the function secrets:
+  `supabase secrets set GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... GOOGLE_REFRESH_TOKEN=... GOOGLE_SENDER_EMAIL=you@gmail.com APP_URL=https://erp-sup.vercel.app`
+- The Supabase project URL and service role key are provided to the Edge Function by Supabase. Do not put Google OAuth values or the service role key in the browser app.
+- The request notification goes to the email on each ERP admin profile; approval notices go to the email on the approved user's profile. `GOOGLE_SENDER_EMAIL` must match the Gmail account authorized for Gmail API sending.
 - `ADMIN_NOTIFICATION_EMAIL` is no longer needed; the function reads admin recipients from `profiles`.
 
 Forgot password

@@ -184,6 +184,7 @@ try{let r;if(id){r={...S.form.v,...o};await DB.doc("rec_"+k+"/"+id).set(r)}else 
 await chain(k,o);S.msg=r.id+" saved. Linked statuses updated.";if(k=="spectro"&&o.result=="Fail")S.msg=r.id+" failed. Work Order is on hold until Quality decides.";
 S.form=null;S.err="";S.view=k;if(P.k==k)P.page=0;await refreshView()}catch(e){S.err="Could not save: "+(e.message||e.code||"error")}render()}
 async function setAcc(id,perms,label){await DB.doc("access/"+id).set({perms,label})}
+async function sendAccessEmail(action,userId){const{error}=await sb.functions.invoke("access-email",{body:{action,user_id:userId}});if(error)throw new Error(error.message||"Email notification failed")}
 document.addEventListener("click",async e=>{const a=e.target.closest("[data-a]");if(!a)return;const d=a.dataset;
 try{switch(d.a){
 case"out":await window.signOut();return;case"menu":S.menu=!S.menu;break;
@@ -206,8 +207,8 @@ S.step=null;S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}
 case"save":await submit();return;case"cancel":S.form=null;S.err="";if(MODS[S.view]&&P.k!=S.view){openList(S.view);await refreshView()}break;
 case"del":if(confirm("Delete "+S.form.id+"?")){await DB.doc("rec_"+S.form.k+"/"+S.form.id).delete();S.form=null;await refreshView()}break;
 case"demo":await demo();DS=null;await refreshView();break;
-case"req":await DB.doc("requests/"+me.id).set({at:Date.now()});requested=true;break;
-case"grant":await setAcc(d.id,{...TPL[d.t].p},TPL[d.t].l);DB.doc("requests/"+d.id).delete().catch(()=>{});break;
+case"req":await DB.doc("requests/"+me.id).set({at:Date.now()});requested=true;try{await sendAccessEmail("request",me.id);S.msg="Access request sent. The administrator has been notified by email."}catch(x){S.msg="Your access request was saved, but the administrator email could not be sent: "+x.message}break;
+case"grant":await setAcc(d.id,{...TPL[d.t].p},TPL[d.t].l);try{await sendAccessEmail("approved",d.id);S.msg=nm(d.id)+" was granted access and notified by email."}catch(x){S.msg=nm(d.id)+" was granted access, but the confirmation email could not be sent: "+x.message}DB.doc("requests/"+d.id).delete().catch(()=>{});break;
 case"revoke":if(confirm("Remove access for "+nm(d.id)+"?"))await DB.doc("access/"+d.id).delete();break}}catch(x){S.msg="Action failed: "+(x.message||x.code||"error")}
 render()});
 document.addEventListener("input",async e=>{if(e.target.id=="q"){P.q=e.target.value;later("q",async()=>{P.page=0;try{await loadPage()}catch(x){S.msg="Search failed: "+x.message}render()},350)}

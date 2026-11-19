@@ -13,6 +13,17 @@ Setup
 3. Paste Project URL + anon key (Settings > API). The FIRST account you create is the admin.
 4. Other people create accounts, then the admin grants module access in Users and access.
 
+Access email notifications
+- The Request access button emails the configured administrator. When an administrator grants a user module access, that user receives an approval email.
+- Email is sent by the `supabase/functions/access-email` Edge Function through Resend. Create a Resend API key and verify the sender domain/address first.
+- From this project folder, link the Supabase project and deploy the function with the Supabase CLI:
+  `supabase link --project-ref YOUR_PROJECT_REF`
+  `supabase functions deploy access-email`
+- Configure the function secrets (use a verified Resend sender address):
+  `supabase secrets set RESEND_API_KEY=re_... ADMIN_NOTIFICATION_EMAIL=admin@example.com RESEND_FROM_EMAIL="Foundry ERP <erp@example.com>" APP_URL=https://your-app.example.com`
+- The Supabase project URL and service role key are provided to the Edge Function by Supabase. Do not put the Resend key or service role key in the browser app.
+- The request notification goes to `ADMIN_NOTIFICATION_EMAIL`; approval notices go to the email on the user's profile.
+
 Forgot password
 - Login screen > "Forgot password?" emails a reset link. This needs the app hosted on a web address (not opened from a file).
 - In Supabase > Authentication > URL Configuration set Site URL to your app link and add it under Redirect URLs.

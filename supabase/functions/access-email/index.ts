@@ -28,9 +28,8 @@ Deno.serve(async (request) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const resendKey = Deno.env.get("RESEND_API_KEY");
-  const adminEmail = Deno.env.get("ADMIN_NOTIFICATION_EMAIL");
   const fromEmail = Deno.env.get("RESEND_FROM_EMAIL");
-  if (!supabaseUrl || !anonKey || !serviceKey || !resendKey || !adminEmail || !fromEmail) {
+  if (!supabaseUrl || !anonKey || !serviceKey || !resendKey || !fromEmail) {
     return json({ error: "Email service is not configured" }, 500);
   }
 
@@ -60,11 +59,17 @@ Deno.serve(async (request) => {
 
   let subject: string;
   let html: string;
+  let recipients: string[];
   if (action === "request") {
     if (targetId !== sender.id) return json({ error: "You can only notify for your own request" }, 403);
     const { data: accessRequest } = await admin
       .from("access_requests").select("user_id").eq("user_id", targetId).maybeSingle();
     if (!accessRequest) return json({ error: "Access request was not found" }, 404);
+    const { data: admins, error: adminsError } = await admin
+      .from("profiles").select("email").eq("role", "admin");
+    if (adminsError) return json({ error: "Could not find ERP administrators" }, 500);
+    recipients = [...new Set((admins || []).map((profile) => profile.email).filter(Boolean))];
+    if (!recipients.length) return json({ error: "No administrator email is registered in Foundry ERP" }, 404);
     const name = escapeHtml(sender.full_name || sender.email || "A new user");
     const email = escapeHtml(sender.email || "");
     subject = "Foundry ERP access request";
@@ -77,22 +82,22 @@ Deno.serve(async (request) => {
     ]);
     if (recipientError || !recipient?.email) return json({ error: "User email was not found" }, 404);
     if (!access) return json({ error: "User access has not been granted" }, 409);
+    recipients = [recipient.email];
     const name = escapeHtml(recipient.full_name || recipient.email);
     const appUrl = Deno.env.get("APP_URL");
     subject = "Your Foundry ERP access is approved";
     html = `<p>Hello ${name},</p><p>Your Foundry ERP access has been approved. You can now sign in and use the modules assigned to your account.</p>${appUrl ? `<p><a href="${escapeHtml(appUrl)}">Open Foundry ERP</a></p>` : ""}`;
     // Only an administrator can send approval messages; the recipient is the approved user's address.
-    return await sendEmail(resendKey, fromEmail, recipient.email, subject, html);
   }
 
-  return await sendEmail(resendKey, fromEmail, adminEmail, subject, html);
+  return await sendEmail(resendKey, fromEmail, recipients, subject, html);
 });
 
-async function sendEmail(apiKey: string, from: string, to: string, subject: string, html: string) {
+async function sendEmail(apiKey: string, from: string, to: string[], subject: string, html: string) {
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to: [to], subject, html }),
+    body: JSON.stringify({ from, to, subject, html }),
   });
   if (!response.ok) {
     const detail = await response.text();

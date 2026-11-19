@@ -14,15 +14,16 @@ Setup
 4. Other people create accounts, then the admin grants module access in Users and access.
 
 Access email notifications
-- The Request access button emails the configured administrator. When an administrator grants a user module access, that user receives an approval email.
+- The Request access button emails the address(es) on ERP profiles with the `admin` role. When an administrator grants a user module access, that user receives an approval email.
 - Email is sent by the `supabase/functions/access-email` Edge Function through Resend. Create a Resend API key and verify the sender domain/address first.
 - From this project folder, link the Supabase project and deploy the function with the Supabase CLI:
   `supabase link --project-ref YOUR_PROJECT_REF`
   `supabase functions deploy access-email`
 - Configure the function secrets (use a verified Resend sender address):
-  `supabase secrets set RESEND_API_KEY=re_... ADMIN_NOTIFICATION_EMAIL=admin@example.com RESEND_FROM_EMAIL="Foundry ERP <erp@example.com>" APP_URL=https://your-app.example.com`
+  `supabase secrets set RESEND_API_KEY=re_... RESEND_FROM_EMAIL="Foundry ERP <notifications@yourdomain.com>" APP_URL=https://erp-sup.vercel.app`
 - The Supabase project URL and service role key are provided to the Edge Function by Supabase. Do not put the Resend key or service role key in the browser app.
-- The request notification goes to `ADMIN_NOTIFICATION_EMAIL`; approval notices go to the email on the user's profile.
+- The request notification goes to the email on each ERP admin profile; approval notices go to the email on the approved user's profile. `RESEND_FROM_EMAIL` must use a verified Resend domain.
+- `ADMIN_NOTIFICATION_EMAIL` is no longer needed; the function reads admin recipients from `profiles`.
 
 Forgot password
 - Login screen > "Forgot password?" emails a reset link. This needs the app hosted on a web address (not opened from a file).

@@ -184,7 +184,7 @@ try{let r;if(id){r={...S.form.v,...o};await DB.doc("rec_"+k+"/"+id).set(r)}else 
 await chain(k,o);S.msg=r.id+" saved. Linked statuses updated.";if(k=="spectro"&&o.result=="Fail")S.msg=r.id+" failed. Work Order is on hold until Quality decides.";
 S.form=null;S.err="";S.view=k;if(P.k==k)P.page=0;await refreshView()}catch(e){S.err="Could not save: "+(e.message||e.code||"error")}render()}
 async function setAcc(id,perms,label){await DB.doc("access/"+id).set({perms,label})}
-async function sendAccessEmail(action,userId){const{error}=await sb.functions.invoke("access-email",{body:{action,user_id:userId}});if(error)throw new Error(error.message||"Email notification failed")}
+async function sendAccessEmail(action,userId){const{error}=await sb.functions.invoke("access-email",{body:{action,user_id:userId}});if(!error)return;let message=error.message||"Email notification failed";try{const body=await error.context.clone().json();message=body.error||body.message||message}catch(e){}throw new Error(message)}
 document.addEventListener("click",async e=>{const a=e.target.closest("[data-a]");if(!a)return;const d=a.dataset;
 try{switch(d.a){
 case"out":await window.signOut();return;case"menu":S.menu=!S.menu;break;

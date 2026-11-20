@@ -90,7 +90,9 @@ function showNewPassword() {
 window.signOut = async () => { await sb.auth.signOut(); location.reload(); };
 async function init() {
   const c = current(); if (!c) return showConfig();
-  window.sb = supabase.createClient(c.url, c.key, { auth: { persistSession: true, autoRefreshToken: true, storageKey: 'foundry-erp-auth' } });
+  try { localStorage.removeItem('foundry-erp-auth'); } catch (e) {}
+  // Keep sign-in only in memory so a full page reload always returns to login.
+  window.sb = supabase.createClient(c.url, c.key, { auth: { persistSession: false, autoRefreshToken: true, storageKey: 'foundry-erp-auth' } });
   sb.auth.onAuthStateChange(ev => { if (ev === 'PASSWORD_RECOVERY') showNewPassword(); });
   const { data } = await sb.auth.getSession();
   if (/type=recovery/.test(location.hash)) return showNewPassword();

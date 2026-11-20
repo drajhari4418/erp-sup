@@ -4,14 +4,19 @@
 create table profiles (
   id uuid primary key references auth.users on delete cascade,
   full_name text, email text,
-  role text not null default 'user' check (role in ('admin','user'))
+  role text not null default 'user' check (role in ('admin','user')),
+  status text not null default 'pending' check (status in ('pending','approved','rejected')),
+  approved_by uuid references profiles(id) on delete set null,
+  approved_at timestamptz,
+  created_at timestamptz not null default now()
 );
 -- First person to sign up becomes admin.
 create function handle_new_user() returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  insert into profiles (id, full_name, email, role)
+  insert into profiles (id, full_name, email, role, status)
   values (new.id, new.raw_user_meta_data->>'full_name', new.email,
-          case when exists (select 1 from profiles) then 'user' else 'admin' end);
+          case when exists (select 1 from profiles) then 'user' else 'admin' end,
+          case when exists (select 1 from profiles) then 'pending' else 'approved' end);
   return new;
 end $$;
 create trigger on_auth_user_created after insert on auth.users for each row execute function handle_new_user();

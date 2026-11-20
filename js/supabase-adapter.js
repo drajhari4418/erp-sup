@@ -120,10 +120,10 @@ function makeU(sb) {
     async me() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error('SESSION_INVALID');
-      const { data: p, error } = await sb.from('profiles').select('full_name,email,role').eq('id', user.id).single();
+      const { data: p, error } = await sb.from('profiles').select('full_name,email,role,status').eq('id', user.id).single();
       if (error) throw error;
       const adm = p.role === 'admin';
-      return { id: user.id, name: nm(p), isOwner: adm, canEdit: adm };
+      return { id: user.id, name: nm(p), email: p.email, status: p.status, isOwner: adm, canEdit: adm };
     },
     async can() { return true; },
     async profiles(ids) {

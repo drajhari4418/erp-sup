@@ -184,7 +184,7 @@ try{let r;if(id){r={...S.form.v,...o};await DB.doc("rec_"+k+"/"+id).set(r)}else 
 await chain(k,o);S.msg=r.id+" saved. Linked statuses updated.";if(k=="spectro"&&o.result=="Fail")S.msg=r.id+" failed. Work Order is on hold until Quality decides.";
 S.form=null;S.err="";S.view=k;if(P.k==k)P.page=0;await refreshView()}catch(e){S.err="Could not save: "+(e.message||e.code||"error")}render()}
 async function setAcc(id,perms,label){await DB.doc("access/"+id).set({perms,label})}
-async function sendAccessEmail(action,userId){const{error}=await sb.functions.invoke("access-email",{body:{action,user_id:userId}});if(!error)return;let message=error.message||"Email notification failed";try{const body=await error.context.clone().json();message=body.error||body.message||message}catch(e){}throw new Error(message)}
+async function markAuthAccessRequest(at){const{data:{user},error}=await sb.auth.getUser();if(error)throw error;const metadata=user.user_metadata||{},previous=metadata.foundry_erp_access_request||{};if(previous.requested_at===at)return;const{error:updateError}=await sb.auth.updateUser({data:{...metadata,foundry_erp_access_request:{requested_at:at}}});if(updateError)throw updateError}
 document.addEventListener("click",async e=>{const a=e.target.closest("[data-a]");if(!a)return;const d=a.dataset;
 try{switch(d.a){
 case"out":await window.signOut();return;case"menu":S.menu=!S.menu;break;
@@ -207,8 +207,8 @@ S.step=null;S.view=x[1];S.form={k:x[1],v:x[2](r),id:null};S.err="";break}
 case"save":await submit();return;case"cancel":S.form=null;S.err="";if(MODS[S.view]&&P.k!=S.view){openList(S.view);await refreshView()}break;
 case"del":if(confirm("Delete "+S.form.id+"?")){await DB.doc("rec_"+S.form.k+"/"+S.form.id).delete();S.form=null;await refreshView()}break;
 case"demo":await demo();DS=null;await refreshView();break;
-case"req":await DB.doc("requests/"+me.id).set({at:Date.now()});requested=true;try{await sendAccessEmail("request",me.id);S.msg="Access request sent. The administrator has been notified by email."}catch(x){S.msg="Your access request was saved, but the administrator email could not be sent: "+x.message}break;
-case"grant":await setAcc(d.id,{...TPL[d.t].p},TPL[d.t].l);try{await sendAccessEmail("approved",d.id);S.msg=nm(d.id)+" was granted access and notified by email."}catch(x){S.msg=nm(d.id)+" was granted access, but the confirmation email could not be sent: "+x.message}DB.doc("requests/"+d.id).delete().catch(()=>{});break;
+case"req":{const at=new Date().toISOString();await DB.doc("requests/"+me.id).set({at:Date.now()});requested=true;try{await markAuthAccessRequest(at);S.msg="Access request saved. It is visible on this user in Supabase Authentication > Users."}catch(x){S.msg="Access request saved in Foundry ERP, but the Supabase Auth user marker could not be updated: "+x.message}break}
+case"grant":await setAcc(d.id,{...TPL[d.t].p},TPL[d.t].l);S.msg=nm(d.id)+" was granted access.";DB.doc("requests/"+d.id).delete().catch(()=>{});break;
 case"revoke":if(confirm("Remove access for "+nm(d.id)+"?"))await DB.doc("access/"+d.id).delete();break}}catch(x){S.msg="Action failed: "+(x.message||x.code||"error")}
 render()});
 document.addEventListener("input",async e=>{if(e.target.id=="q"){P.q=e.target.value;later("q",async()=>{P.page=0;try{await loadPage()}catch(x){S.msg="Search failed: "+x.message}render()},350)}
@@ -223,6 +223,7 @@ let DG="",LOCAL=false;
 async function start(){boot=0;render();DB=makeDB(window.sb);U=makeU(window.sb);
 try{await U.me()}catch(e){if(e.message=="SESSION_INVALID"){try{await sb.auth.signOut()}catch(x){}showLogin(false);note("Your saved sign-in is no longer valid. Please sign in again.");return}DG=e.message||"Profile not found. Did you run schema.sql?";boot=2;render();return}
 me=await U.me();isAdmin=!!(me.isOwner||me.canEdit);canW=(await U.can("data.write"))!==false;
+if(me.id&&!isAdmin){try{const req=await DB.doc("requests/"+me.id).get();requested=req.exists;if(requested){const stamp=req.data()?.at,at=Number.isFinite(Number(stamp))?new Date(Number(stamp)).toISOString():new Date().toISOString();try{await markAuthAccessRequest(at)}catch(e){}}}catch(e){}}
 if(me.id)DB.doc("access/"+me.id).onSnapshot(s=>{acc=s.exists?s.data():null;sync();render()},()=>{});
 if(isAdmin){DB.collection("access").onSnapshot(s=>{accList=s.docs.map(d=>({...d.data(),id:d.id}));loadNames();render()},()=>{});
 DB.collection("requests").onSnapshot(s=>{reqList=s.docs.map(d=>({id:d.id}));loadNames();render()},()=>{})}

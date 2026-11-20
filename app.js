@@ -204,7 +204,7 @@ if(err){S.err=err;S.form.v=Object.assign(S.form.v,o);render();return}
 try{let r;if(id){r={...S.form.v,...o};await DB.doc("rec_"+k+"/"+id).set(r)}else r=await add(k,o);
 await chain(k,o);S.msg=r.id+" saved. Linked statuses updated.";if(k=="spectro"&&o.result=="Fail")S.msg=r.id+" failed. Work Order is on hold until Quality decides.";
 S.form=null;S.err="";S.view=k;if(P.k==k)P.page=0;await refreshView()}catch(e){S.err="Could not save: "+(e.message||e.code||"error")}render()}
-async function setAcc(id,perms,label){await sb.from("profiles").update({status:"approved",approved_by:me.id,approved_at:new Date().toISOString()}).eq("id",id).neq("status","approved");await DB.doc("access/"+id).set({perms,label})}
+async function setAcc(id,perms,label){const{error}=await sb.from("profiles").update({status:"approved",approved_by:me.id,approved_at:new Date().toISOString()}).eq("id",id).neq("status","approved");if(error)throw error;await DB.doc("access/"+id).set({perms,label})}
 document.addEventListener("click",async e=>{const a=e.target.closest("[data-a]");if(!a)return;const d=a.dataset;
 try{switch(d.a){
 case"out":await window.signOut();return;case"menu":S.menu=!S.menu;break;

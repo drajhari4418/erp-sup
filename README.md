@@ -11,23 +11,13 @@ Setup
 1. (Testing) Authentication > Providers > Email > turn off "Confirm email"
 2. Open index.html (double-click works) or deploy the folder to any static host
 3. Paste Project URL + anon key (Settings > API). The FIRST account you create is the admin.
-4. Other people create accounts, then the admin grants module access in Users and access.
+4. Other people create accounts and wait for approval. The admin approves them or accepts their access request in Users and access, choosing a role to grant module access.
 
-Access email notifications
-- The Request access button emails the address(es) on ERP profiles with the `admin` role. When an administrator grants a user module access, that user receives an approval email.
-- Email is sent by the `supabase/functions/access-email` Edge Function through the Gmail API. It sends from the Gmail account authorized with Google OAuth; no custom domain is needed.
-- In Google Cloud Console, create a project, enable the Gmail API, configure the OAuth consent screen, and create an OAuth client. Add the OAuth Playground redirect URI (`https://developers.google.com/oauthplayground`) to the client. If the consent screen is in Testing mode, add the Gmail sender account as a test user.
-- In OAuth Playground settings, enable "Use your own OAuth credentials" and enter the client ID and secret. Authorize the scope `https://www.googleapis.com/auth/gmail.send` while signed into the Gmail account that should send the mail, exchange the code, and copy the returned refresh token.
-- Add these secrets in Supabase Edge Functions > Secrets (or use the CLI below): `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, and `GOOGLE_SENDER_EMAIL` (the same Gmail account authorized above). Keep all OAuth values private and only in Supabase secrets.
-- Google OAuth apps left in Testing mode can have refresh tokens that expire after seven days. For ongoing use, publish the OAuth app and complete any Google verification requirements shown for the Gmail send scope.
-- From this project folder, link the Supabase project and deploy the function with the Supabase CLI:
-  `supabase link --project-ref YOUR_PROJECT_REF`
-  `supabase functions deploy access-email`
-- Configure the function secrets:
-  `supabase secrets set GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... GOOGLE_REFRESH_TOKEN=... GOOGLE_SENDER_EMAIL=you@gmail.com APP_URL=https://erp-sup.vercel.app`
-- The Supabase project URL and service role key are provided to the Edge Function by Supabase. Do not put Google OAuth values or the service role key in the browser app.
-- The request notification goes to the email on each ERP admin profile; approval notices go to the email on the approved user's profile. `GOOGLE_SENDER_EMAIL` must match the Gmail account authorized for Gmail API sending.
-- `ADMIN_NOTIFICATION_EMAIL` is no longer needed; the function reads admin recipients from `profiles`.
+Existing Supabase project: run `user_approval.sql` once in SQL Editor so profiles have approval status fields and new signups are marked pending. Existing profiles remain approved. Fresh projects get these fields from `schema.sql`.
+
+Access requests
+- Request access is saved to the `access_requests` table. The signed-in user's Supabase Auth user metadata also gets a `foundry_erp_access_request` object with the request time. Admins can inspect it at Authentication > Users > select the user > User Metadata.
+- Admins grant access and choose a role from Foundry ERP > Users and access. No email provider or Edge Function is used for access requests or approvals.
 
 Forgot password
 - Login screen > "Forgot password?" emails a reset link. This needs the app hosted on a web address (not opened from a file).
